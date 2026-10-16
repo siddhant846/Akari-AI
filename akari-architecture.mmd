@@ -1,0 +1,92 @@
+flowchart TB
+    User([User<br/>Voice / Text])
+
+    subgraph Browser["Browser — React 19 + Tailwind v4 (served on :3000)"]
+        direction TB
+        UI["Holographic UI<br/>AkariCoreVisualizer · Orb / Character video"]
+        Panels["Settings · Memory Dashboard · Transcript<br/>BrowserAgent · TextChatFallback · SudoPopup · Toast"]
+        Audio["Web Audio API<br/>PCM 16-bit / 16kHz"]
+        Wake["Web Speech API<br/>Wake word: Hey Akari"]
+        Screen["getDisplayMedia<br/>Screen sharing"]
+    end
+
+    subgraph Node["Node.js Server — Express + WebSocket (:3000)"]
+        direction TB
+        Orchestrator["server.ts<br/>Orchestrator + Function Calling"]
+        MemoryAPI["server_memory.ts<br/>Memory CRUD"]
+        Reminders["server_reminders.ts<br/>Timer-based reminders"]
+        Paths["server_paths.ts<br/>Data dir resolution"]
+        Keys["API key storage"]
+    end
+
+    subgraph Gemini["Google Gemini"]
+        Live["Gemini Live API<br/>Real-time voice-to-voice"]
+        SDK["@google/genai<br/>Function calling + memory extraction"]
+    end
+
+    subgraph Agent["Python Desktop Agent — FastAPI + Playwright (:8765)"]
+        direction TB
+        Dispatcher["server.py<br/>POST /execute &#123;tool, args&#125;"]
+        Registry["registry.py<br/>Tool registry"]
+
+        subgraph Tools["91 tools · 22 modules"]
+            direction LR
+            T1["Browser<br/>CDP / Managed"]
+            T2["Files · Clipboard<br/>Coding · Screenshot OCR"]
+            T3["System · PC · Windows<br/>Applications · Terminal"]
+            T4["Google Calendar<br/>Gmail · Tasks"]
+            T5["Search · News · Weather<br/>Websites · IITM"]
+            T6["OS Input · Hyprland<br/>Startup · Conversation export"]
+        end
+
+        subgraph Backends["Platform Backends"]
+            direction LR
+            B1["Windows<br/>Win32"]
+            B2["Linux Wayland<br/>Hyprland"]
+            B3["Linux GNOME<br/>X11"]
+            B4["macOS<br/>osascript"]
+        end
+
+        Confirm["confirmation.py<br/>Two-step token (60s)<br/>+ command blacklist"]
+    end
+
+    subgraph Storage["Persistence — ~/.akari/ (JSON files)"]
+        direction LR
+        S1[(secrets.json)]
+        S2[(settings.json)]
+        S3[(memories.json)]
+        S4[(reminders.json)]
+        S5[(metadata.json)]
+    end
+
+    User -->|speaks / types| Wake
+    User --> Audio
+    Wake --> UI
+    Audio <-->|WebSocket| Orchestrator
+    Screen -->|frames| Orchestrator
+    UI --- Panels
+    Panels <-->|HTTP REST| Orchestrator
+
+    Orchestrator <-->|WebSocket<br/>audio stream| Live
+    Orchestrator <--> SDK
+    SDK -.->|memory transactions<br/>add / update / delete| MemoryAPI
+
+    Orchestrator --> MemoryAPI
+    Orchestrator --> Reminders
+    Orchestrator --> Keys
+    Orchestrator --> Paths
+    Reminders -.->|inject callback<br/>into session| Orchestrator
+    Reminders -.->|toast| Panels
+
+    Orchestrator -->|HTTP tool dispatch| Dispatcher
+    Dispatcher --> Registry
+    Registry --> Tools
+    Tools --> Backends
+    Tools -->|dangerous actions| Confirm
+    Confirm -.->|sudo / power prompt| Panels
+
+    Keys --> S1
+    Panels -.->|settings| S2
+    MemoryAPI --> S3
+    Reminders --> S4
+    Paths --> S5

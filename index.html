@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Akari AI - Desktop Assistant</title>
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="application-name" content="Akari AI" />
+    <meta name="apple-mobile-web-app-title" content="Akari AI" />
+    <meta name="theme-color" content="#050509" />
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        /* background dynamically handled */
+        color: #ffffff;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
+    </style>
+    <script src="./live2d/live2dcubismcore.min.js"></script>
+  </head>
+  <body class="text-white">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
