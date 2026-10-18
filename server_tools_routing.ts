@@ -104,14 +104,7 @@ export const CORE_TOOLS: any[] = [
                   description: "Take a screenshot and run OCR to extract visible text from the screen.",
                   parameters: { type: Type.OBJECT, properties: { max_chars: { type: Type.INTEGER, description: "Max OCR chars (default 1500)." } } }
                 },
-  {
-                  name: "verifySpeakerVoice",
-                  description: "Verify if the current live speaker's acoustic voiceprint matches Siddhant (Owner) or if someone else is speaking. Returns match confidence %, detected pitch (Hz), and verified speaker identity.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {}
-                  }
-                },
+
   {
                   name: "expressInnerThought",
                   description: "Silently display an inner thought in the user's on-screen thought bubble ONLY during complex multi-step tasks (e.g. website building, coding, multi-step scraping). NEVER call this during conversational voice replies or direct questions.",

@@ -126,6 +126,7 @@ export class AkariAudioSession {
   private lastSpeechTimestamp = 0;
   private isUserTalking = false;
   private silenceStartTimestamp = 0;
+  private ambientNoiseFloor = 0.010;
   private firstAudioChunkReceivedTime = 0;
   private hasReportedPlaybackThisTurn = false;
 
@@ -417,19 +418,35 @@ export class AkariAudioSession {
 
         this.bargeInConsecutiveFrames = 0;
 
-        // Turn Timing Measurement (Stage a: User stops speaking > end of speech detected)
-        const speechThreshold = 0.015;
-        if (rms >= speechThreshold) {
+        // Adaptively track ambient noise floor during non-speech / quiet periods
+        if (!this.isUserTalking || rms < this.ambientNoiseFloor * 1.5) {
+          this.ambientNoiseFloor = this.ambientNoiseFloor * 0.96 + rms * 0.04;
+          this.ambientNoiseFloor = Math.max(0.005, Math.min(0.050, this.ambientNoiseFloor));
+        }
+
+        // Dynamic dual-threshold VAD: adapts to room tone, AC, and fan noise
+        const speechStartThreshold = Math.max(0.020, this.ambientNoiseFloor * 2.2);
+        const silenceThreshold = Math.max(0.012, this.ambientNoiseFloor * 1.4);
+
+        if (rms >= speechStartThreshold) {
           this.lastSpeechTimestamp = now;
           this.isUserTalking = true;
           this.silenceStartTimestamp = 0;
         } else if (this.isUserTalking) {
-          if (!this.silenceStartTimestamp) {
-            this.silenceStartTimestamp = now;
+          if (rms <= silenceThreshold || now - this.lastSpeechTimestamp > 80) {
+            if (!this.silenceStartTimestamp) {
+              this.silenceStartTimestamp = now;
+            }
           }
-          if (now - this.silenceStartTimestamp >= 220) {
+
+          const silenceElapsed = this.silenceStartTimestamp ? (now - this.silenceStartTimestamp) : 0;
+          const timeSinceSpeech = now - this.lastSpeechTimestamp;
+
+          // Hard guarantee: triggers after 200ms silence or max 350ms since last active speech packet
+          if (silenceElapsed >= 200 || timeSinceSpeech >= 350) {
             const vadLatency = now - this.lastSpeechTimestamp;
             this.isUserTalking = false;
+            this.silenceStartTimestamp = 0;
             if (this.ws && this.ws.readyState === WebSocket.OPEN) {
               this.ws.send(JSON.stringify({
                 type: "client_timing",
@@ -442,13 +459,13 @@ export class AkariAudioSession {
         }
 
         // Response Speed & VAD Continuity:
-        // Gemini Live relies on receiving trailing silence in the PCM audio stream to trigger its neural VAD endpointing (~250ms).
+        // Gemini Live relies on receiving trailing silence in the PCM audio stream to trigger its neural VAD endpointing (~200ms).
         // In standard mode: stream continuously while listening so responses are instantaneous.
-        // In low-bandwidth mode: preserve 8 frames (~250ms) of trailing silence so Gemini triggers immediately before pausing stream.
+        // In low-bandwidth mode: preserve 6 frames (~190ms) of trailing silence so Gemini triggers immediately before pausing stream.
         if (this.lowBandwidthMode) {
-          const isSpeaking = rms >= 0.009;
+          const isSpeaking = rms >= speechStartThreshold * 0.6;
           if (isSpeaking) {
-            this.speechHangoverFrames = 8;
+            this.speechHangoverFrames = 6;
           } else if (this.speechHangoverFrames > 0) {
             this.speechHangoverFrames--;
           }
@@ -466,30 +483,8 @@ export class AkariAudioSession {
         const pcmBuffer = floatTo16BitPCM(channelData);
         const base64 = base64ArrayBuffer(pcmBuffer);
 
-        // Run live acoustic voice biometrics throttled to ~4 times/sec (saving 87.5% CPU load)
-        let bioResult: ReturnType<typeof globalVoiceBiometrics.processAudioFrame> | null = null;
-        if (this.lastSpeakerRecognition !== false && now - this.lastSpeakerBroadcastTime > 250) {
-          bioResult = globalVoiceBiometrics.processAudioFrame(channelData, this.inputAudioCtx?.sampleRate || 16000);
-          if (this.onSpeakerChange && bioResult.speakerType !== "ambient") {
-            this.onSpeakerChange(bioResult);
-          }
-        }
-
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
           this.ws.send(JSON.stringify({ audio: base64 }));
-
-          // Broadcast speaker verification state periodically during active speech
-          if (bioResult && now - this.lastSpeakerBroadcastTime > 1500 && bioResult.speakerType !== "ambient") {
-            this.lastSpeakerBroadcastTime = now;
-            this.ws.send(JSON.stringify({
-              type: "speaker_verification",
-              isOwner: bioResult.isOwner,
-              confidence: bioResult.confidence,
-              speakerType: bioResult.speakerType,
-              detectedPitch: bioResult.detectedPitch,
-              ownerName: this.lastOwnerName || "Siddhant"
-            }));
-          }
         }
       };
 

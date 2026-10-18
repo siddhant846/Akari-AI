@@ -126,11 +126,13 @@ assert(serverSrc.includes("endOfSpeechSensitivity: EndSensitivity.END_SENSITIVIT
 assert(serverSrc.includes("session.sendClientContent({ turnComplete: true })"), "Server emits immediate turnComplete on client end-of-speech");
 
 const audioSrc = fs.readFileSync("src/lib/audio.ts", "utf-8");
-assert(audioSrc.includes("now - this.silenceStartTimestamp >= 220"), "Client VAD silence threshold tuned to 220ms");
+assert(audioSrc.includes("ambientNoiseFloor"), "Adaptive noise floor tracking present in audio.ts");
+assert(audioSrc.includes("silenceElapsed >= 200 || timeSinceSpeech >= 350"), "Client VAD cutoff guarantee prevents ambient noise hangs");
 assert(audioSrc.includes('endOfTurn: true'), "Client sends endOfTurn signal immediately upon silence");
 assert(audioSrc.includes("initialPreRoll = this.lowBandwidthMode ? 0.025 : 0.010"), "Client playback pre-roll optimized to 10ms");
 
 const routingSrc = fs.readFileSync("server_tools_routing.ts", "utf-8");
+assert(!routingSrc.includes("verifySpeakerVoice"), "verifySpeakerVoice tool eliminated from core tools to stop latency spikes");
 assert(routingSrc.includes("NEVER call this during conversational voice replies or direct questions"), "expressInnerThought restricted from conversational queries to eliminate tool call round-trips");
 
 // ---------------------------------------------------------------------------

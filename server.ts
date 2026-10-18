@@ -1116,14 +1116,10 @@ async function startServer() {
           `- NEVER output <think> tags, parentheses, or thought text in your spoken response!\n`;
       }
 
-      if (speakerRecognition) {
-        baseInstructions +=
-          `\nSPEAKER BIOMETRIC VOICE RECOGNITION PROTOCOL:\n` +
-          `- PRIMARY AUTHORIZED SPEAKER: ${ownerName} (Creator, Master, and Sole Owner of this workstation and AI system).\n` +
-          `- IDENTITY RECOGNITION: The person currently speaking at this computer workstation is ${ownerName}. Address him directly as ${ownerName}.\n` +
-          `- DO NOT randomly or mistakenly call ${ownerName} a 'guest' or stranger. He is the verified owner of this system.\n` +
-          `- When asked 'Who is speaking?', 'Do you recognize my voice?', 'Can you identify me?', 'Is this my voice or someone else?': Call 'verifySpeakerVoice' to inspect live biometric stats and enthusiastically report the verification match percentage.\n\n`;
-      }
+      baseInstructions +=
+        `\nWORKSTATION SPEAKER RECOGNITION (ZERO LATENCY):\n` +
+        `- PRIMARY AUTHORIZED SPEAKER: ${ownerName} (Creator, Master, and Sole Owner of this workstation and AI system).\n` +
+        `- IDENTITY RECOGNITION: The person speaking at this computer workstation is ${ownerName}. Address him directly as ${ownerName} with zero hesitation, zero pauses, and zero verification tool calls.\n\n`;
       baseInstructions += 
         "2. STRICT TASK FIDELITY & INTELLIGENT INSTRUCTION FOLLOWING (ZERO HALLUCINATED ACTIONS):\n" +
         "   - Follow the user's each and every instruction with absolute precision, high intelligence, and zero deviation.\n" +
