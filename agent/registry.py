@@ -90,6 +90,8 @@ DESKTOP_TOOL_NAMES = [
     "youtubeControl",
     "searchGoogle",
     "searchGitHub",
+    "searchGoogleMaps",
+    "searchWebAnswer",
     # files
     "createFile",
     "readFile",
@@ -180,8 +182,13 @@ DESKTOP_TOOL_NAMES = [
     "switchWorkspace",
     "listWorkspaces",
     "moveToWorkspace",
-    # news
+    # news & search grounding
     "getNews",
+    "searchWebAnswer",
+    "searchGoogle",
+    "searchWeb",
+    "searchGoogleMaps",
+    "searchGitHub",
     # conversation export
     "exportConversation",
     "listExports",
@@ -198,6 +205,7 @@ DESKTOP_TOOL_NAMES = [
     "cameraOff",
     # PowerPoint & presentation generation
     "createPresentation",
+    "searchPresentationImages",
     "openPowerPoint",
     "readPresentation",
     "addSlideToPresentation",
@@ -207,6 +215,13 @@ DESKTOP_TOOL_NAMES = [
     # Data Analytics & Visualization
     "analyzeData",
     "createDataChart",
+    # Website Builder & Reference-Driven Design Engine
+    "auditLocalBusinesses",
+    "researchDesignReferences",
+    "buildAnimatedWebsite",
+    "qualityCheckWebsite",
+    "searchAndBuildLocalWebsite",
+    "akariBuilderPipeline",
 ]
 
 
@@ -241,6 +256,9 @@ _MODULE_NAMES = [
     "tools.office",
     "tools.analytics",
     "tools.youtube",
+    "tools.website_builder",
+    "tools.reference_designer",
+    "tools.akari_builder",
 ]
 
 
@@ -271,6 +289,9 @@ def load_all() -> None:
     import agent.tools.powerpoint
     import agent.tools.office
     import agent.tools.analytics
+    import agent.tools.website_builder
+    import agent.tools.reference_designer
+    import agent.tools.akari_builder
 
 
 __all__ = ["TOOLS", "STATE", "DESKTOP_TOOL_NAMES", "ToolError", "register", "load_all"]

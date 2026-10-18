@@ -18,3 +18,9 @@ electron-test.zip
 android/app/build/
 android/.gradle/
 android/local.properties
+AKARI_Workspace/
+generated_websites/
+workspace/
+.metals/
+scratch_imgs/
+Desktop/

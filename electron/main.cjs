@@ -163,6 +163,22 @@ function createWindow() {
     mainWindow = null;
   });
 
+  // Handle any window.open calls cleanly without closing or occluding Akari
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      require('electron').shell.openExternal(url);
+    } catch (e) {
+      console.warn('[Electron] Could not openExternal url:', e);
+    }
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    }, 150);
+    return { action: 'deny' };
+  });
+
   // Load Akari Application
   mainWindow.loadURL(SERVER_URL).catch((err) => {
     console.error('[Electron] Failed to load URL, retrying in 1s...', err);

@@ -85,6 +85,7 @@
     "pdfjs-dist": "^6.3.289",
     "pixi-live2d-display": "^0.4.0",
     "pixi.js": "^7.4.3",
+    "pptxgenjs": "^4.0.1",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "vite": "^6.2.3",

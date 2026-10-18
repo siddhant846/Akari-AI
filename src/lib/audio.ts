@@ -99,7 +99,10 @@ export class AkariAudioSession {
   private currentState: LiveState = "disconnected";
   private isActivated = false;
   private isReconnecting = false;
+  private reconnectAttempts = 0;
   private reconnectTimeout: any = null;
+  private heartbeatInterval: any = null;
+  private lastPongTime = 0;
   private speechEndTimer: any = null;
   private lastSpeakerBroadcastTime = 0;
 
@@ -107,14 +110,24 @@ export class AkariAudioSession {
   private speechHangoverFrames = 0;
   private isModelTurnComplete = true;
   private bargeInConsecutiveFrames = 0;
+  private echoSuppressionUntil = 0;
 
   // Saved connection parameters for seamless auto-reconnect
   private lastVoice?: string;
   private lastAvatarStyle?: "character" | "orb" | "vts" | "jrsidd" | string;
   private lastOwnerName?: string;
   private lastSpeakerRecognition?: boolean;
+  private lastPersonaPreset?: string;
+  private lastCustomSystemPrompt?: string;
 
   private vtsSyncInterval: any = null;
+
+  // Turn latency measurement instrumentation (Step 1)
+  private lastSpeechTimestamp = 0;
+  private isUserTalking = false;
+  private silenceStartTimestamp = 0;
+  private firstAudioChunkReceivedTime = 0;
+  private hasReportedPlaybackThisTurn = false;
 
   constructor(handlers: {
     onStateChange: (state: LiveState) => void;
@@ -136,6 +149,37 @@ export class AkariAudioSession {
     this.onTerminalOutput = handlers.onTerminalOutput;
     this.onClientAction = handlers.onClientAction;
     this.onSpeakerChange = handlers.onSpeakerChange;
+
+    if (typeof window !== "undefined") {
+      const resumeAudioIfActive = () => {
+        if (this.isActivated) {
+          if (this.inputAudioCtx && this.inputAudioCtx.state === "suspended") {
+            this.inputAudioCtx.resume().catch(() => {});
+          }
+          if (this.outputAudioCtx && this.outputAudioCtx.state === "suspended") {
+            this.outputAudioCtx.resume().catch(() => {});
+          }
+          if (!this.ws || this.ws.readyState === WebSocket.CLOSED || this.ws.readyState === WebSocket.CLOSING) {
+            this.triggerAutoReconnect();
+          }
+        }
+      };
+
+      window.addEventListener("focus", resumeAudioIfActive);
+      document.addEventListener("visibilitychange", resumeAudioIfActive);
+
+      // Continuous keep-alive so background tabs (e.g. after building a website) never turn off
+      setInterval(() => {
+        if (this.isActivated) {
+          if (this.inputAudioCtx && this.inputAudioCtx.state === "suspended") {
+            this.inputAudioCtx.resume().catch(() => {});
+          }
+          if (this.outputAudioCtx && this.outputAudioCtx.state === "suspended") {
+            this.outputAudioCtx.resume().catch(() => {});
+          }
+        }
+      }, 1000);
+    }
   }
 
   private setState(state: LiveState) {
@@ -161,7 +205,9 @@ export class AkariAudioSession {
     voice?: string,
     avatarStyle?: "character" | "orb" | "vts" | "jrsidd" | string,
     ownerName?: string,
-    speakerRecognition?: boolean
+    speakerRecognition?: boolean,
+    personaPreset?: string,
+    customSystemPrompt?: string
   ) {
     if (this.isActivated) return;
     this.isActivated = true;
@@ -171,9 +217,24 @@ export class AkariAudioSession {
     this.lastAvatarStyle = avatarStyle;
     this.lastOwnerName = ownerName;
     this.lastSpeakerRecognition = speakerRecognition;
+    this.lastPersonaPreset = personaPreset;
+    this.lastCustomSystemPrompt = customSystemPrompt;
 
     this.setState("connecting");
     await this.initAudioAndWebSocket();
+  }
+
+  /**
+   * Updates personality preset and custom prompt dynamically on active session
+   */
+  public updatePersona(newPersona: string, newPrompt?: string) {
+    if (this.lastPersonaPreset === newPersona && this.lastCustomSystemPrompt === newPrompt) return;
+    this.lastPersonaPreset = newPersona;
+    this.lastCustomSystemPrompt = newPrompt;
+    if (this.isActivated && this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+      console.log(`[Akari Audio] Updating active personality archetype to: ${newPersona}`);
+      this.connectWebSocket();
+    }
   }
 
   /**
@@ -215,12 +276,20 @@ export class AkariAudioSession {
         throw new Error("Web Audio API missing in browser.");
       }
 
-      // Initialize or resume AudioContexts
+      // Initialize or resume AudioContexts safely
       if (!this.inputAudioCtx || this.inputAudioCtx.state === "closed") {
-        this.inputAudioCtx = new AudioContextClass({ sampleRate: 16000 });
+        try {
+          this.inputAudioCtx = new AudioContextClass({ sampleRate: 16000 });
+        } catch {
+          this.inputAudioCtx = new AudioContextClass();
+        }
       }
       if (!this.outputAudioCtx || this.outputAudioCtx.state === "closed") {
-        this.outputAudioCtx = new AudioContextClass({ sampleRate: 24000 });
+        try {
+          this.outputAudioCtx = new AudioContextClass({ sampleRate: 24000 });
+        } catch {
+          this.outputAudioCtx = new AudioContextClass();
+        }
       }
 
       if (this.inputAudioCtx.state === "suspended") {
@@ -229,6 +298,17 @@ export class AkariAudioSession {
       if (this.outputAudioCtx.state === "suspended") {
         await this.outputAudioCtx.resume().catch(() => {});
       }
+
+      this.inputAudioCtx.onstatechange = () => {
+        if (this.isActivated && this.inputAudioCtx && this.inputAudioCtx.state === "suspended") {
+          this.inputAudioCtx.resume().catch(() => {});
+        }
+      };
+      this.outputAudioCtx.onstatechange = () => {
+        if (this.isActivated && this.outputAudioCtx && this.outputAudioCtx.state === "suspended") {
+          this.outputAudioCtx.resume().catch(() => {});
+        }
+      };
 
       // Setup output analyser & gain
       if (!this.outputGainNode) {
@@ -242,13 +322,19 @@ export class AkariAudioSession {
 
       // Obtain or reuse user microphone stream
       if (!this.micStream || this.micStream.getAudioTracks().every((t) => t.readyState === "ended")) {
-        this.micStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          },
-        });
+        try {
+          this.micStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+          });
+        } catch (micErr: any) {
+          console.warn("[Akari Audio] Microphone request failed:", micErr);
+          this.setState("disconnected");
+          throw new Error("Microphone permission was denied or is not available. Please allow microphone access in Android app settings.");
+        }
       }
 
       // Ensure all tracks are enabled
@@ -296,34 +382,72 @@ export class AkariAudioSession {
         }
         const rms = Math.sqrt(sumSquares / channelData.length);
 
-        // Acoustic Feedback Shield & Barge-In Detection
-        // When Akari is speaking, room speakers bleed sound into the mic (typically 0.02 - 0.05 RMS).
-        // Sending this echo to Gemini causes Gemini to think the user interrupted and abort its own voice!
-        // We require intentional loud speech (RMS >= 0.075) sustained for at least 4 consecutive frames (~130ms)
-        // to permit genuine barge-in, preventing speaker loopback from cutting off Akari's sentences!
-        if (this.currentState === "speaking") {
-          if (rms >= 0.075) {
+        const now = Date.now();
+        const isModelSpeaking = this.currentState === "speaking" || this.activeSources.length > 0;
+        const isEchoCoolingDown = now < this.echoSuppressionUntil;
+
+        // Acoustic Feedback Shield & Barge-In Protection:
+        // When Akari is speaking or room reverb is settling, room speakers bleed sound into the microphone.
+        // If this bleed audio is streamed to Gemini Live, Gemini's server-side VAD interprets its own voice
+        // as an interruption, instantly cutting off Akari's speech mid-sentence.
+        // Furthermore, Gemini transcribes this echo as a "userTurn" and repeats the same statement back.
+        //
+        // Solution:
+        // 1. Strictly block microphone streaming while Akari is speaking or during echo cooldown.
+        // 2. Permit intentional user barge-in ONLY if the user deliberately speaks loudly over Akari (RMS >= 0.22)
+        //    sustained for at least 8 consecutive frames (~250ms).
+        if (isModelSpeaking || isEchoCoolingDown) {
+          if (rms >= 0.22 && isModelSpeaking) {
             this.bargeInConsecutiveFrames++;
+            if (this.bargeInConsecutiveFrames >= 8) {
+              console.log(`[Akari Audio] Deliberate user barge-in triggered (RMS: ${rms.toFixed(3)})`);
+              this.bargeInConsecutiveFrames = 0;
+              this.handleInterruption();
+              if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({ type: "interrupted" }));
+              }
+              this.echoSuppressionUntil = Date.now() + 250;
+            }
           } else {
             this.bargeInConsecutiveFrames = 0;
-            return;
           }
+          // NEVER forward mic frames to Gemini during model speech or echo cooldown!
+          return;
+        }
 
-          if (this.bargeInConsecutiveFrames < 4) {
-            return;
+        this.bargeInConsecutiveFrames = 0;
+
+        // Turn Timing Measurement (Stage a: User stops speaking > end of speech detected)
+        const speechThreshold = 0.015;
+        if (rms >= speechThreshold) {
+          this.lastSpeechTimestamp = now;
+          this.isUserTalking = true;
+          this.silenceStartTimestamp = 0;
+        } else if (this.isUserTalking) {
+          if (!this.silenceStartTimestamp) {
+            this.silenceStartTimestamp = now;
           }
-        } else {
-          this.bargeInConsecutiveFrames = 0;
+          if (now - this.silenceStartTimestamp >= 600) {
+            const vadLatency = now - this.lastSpeechTimestamp;
+            this.isUserTalking = false;
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+              this.ws.send(JSON.stringify({
+                type: "client_timing",
+                event: "end_of_speech",
+                latencyMs: vadLatency
+              }));
+            }
+          }
         }
 
         // Response Speed & VAD Continuity:
         // Gemini Live relies on receiving trailing silence in the PCM audio stream to trigger its neural VAD endpointing (~300-400ms).
         // In standard mode: stream continuously while listening so responses are instantaneous (<1s).
-        // In low-bandwidth mode: preserve 40 frames (~1.3s) of trailing silence so Gemini triggers immediately before pausing stream.
+        // In low-bandwidth mode: preserve 20 frames (~640ms) of trailing silence so Gemini triggers immediately before pausing stream.
         if (this.lowBandwidthMode) {
           const isSpeaking = rms >= 0.009;
           if (isSpeaking) {
-            this.speechHangoverFrames = 40;
+            this.speechHangoverFrames = 20;
           } else if (this.speechHangoverFrames > 0) {
             this.speechHangoverFrames--;
           }
@@ -342,10 +466,9 @@ export class AkariAudioSession {
         const base64 = base64ArrayBuffer(pcmBuffer);
 
         // Run live acoustic voice biometrics throttled to ~4 times/sec (saving 87.5% CPU load)
-        const now = Date.now();
         let bioResult: ReturnType<typeof globalVoiceBiometrics.processAudioFrame> | null = null;
         if (this.lastSpeakerRecognition !== false && now - this.lastSpeakerBroadcastTime > 250) {
-          bioResult = globalVoiceBiometrics.processAudioFrame(channelData, 16000);
+          bioResult = globalVoiceBiometrics.processAudioFrame(channelData, this.inputAudioCtx?.sampleRate || 16000);
           if (this.onSpeakerChange && bioResult.speakerType !== "ambient") {
             this.onSpeakerChange(bioResult);
           }
@@ -379,11 +502,107 @@ export class AkariAudioSession {
     }
   }
 
+  private startHeartbeat() {
+    this.stopHeartbeat();
+    this.lastPongTime = Date.now();
+    this.heartbeatInterval = setInterval(() => {
+      if (!this.isActivated) {
+        this.stopHeartbeat();
+        return;
+      }
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        try {
+          this.ws.send(JSON.stringify({ type: "ping" }));
+        } catch (e) {}
+      }
+      // Dead socket watchdog: if no pong or traffic received in 30s while socket claims OPEN
+      if (this.ws && this.ws.readyState === WebSocket.OPEN && Date.now() - this.lastPongTime > 30000) {
+        console.warn("[Akari Audio] Keepalive timeout (no server pong for >30s). Cycling zombie socket...");
+        this.triggerAutoReconnect();
+      }
+    }, 10000);
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+  }
+
+  private async ensureAudioAlive(): Promise<void> {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+
+    if (!this.inputAudioCtx || this.inputAudioCtx.state === "closed") {
+      try {
+        this.inputAudioCtx = new AudioContextClass({ sampleRate: 16000 });
+      } catch {
+        this.inputAudioCtx = new AudioContextClass();
+      }
+    }
+    if (!this.outputAudioCtx || this.outputAudioCtx.state === "closed") {
+      try {
+        this.outputAudioCtx = new AudioContextClass({ sampleRate: 24000 });
+      } catch {
+        this.outputAudioCtx = new AudioContextClass();
+      }
+    }
+
+    if (this.inputAudioCtx.state === "suspended") {
+      await this.inputAudioCtx.resume().catch(() => {});
+    }
+    if (this.outputAudioCtx.state === "suspended") {
+      await this.outputAudioCtx.resume().catch(() => {});
+    }
+
+    // Check if mic stream tracks are active
+    const needsMicRefresh =
+      !this.micStream ||
+      this.micStream.getAudioTracks().length === 0 ||
+      this.micStream.getAudioTracks().every((t) => t.readyState === "ended");
+
+    if (needsMicRefresh) {
+      try {
+        this.micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+        if (this.micSourceNode) {
+          try {
+            this.micSourceNode.disconnect();
+          } catch {}
+          this.micSourceNode = null;
+        }
+      } catch (err) {
+        console.warn("[Akari Audio] Failed to refresh mic stream tracks during reconnect:", err);
+      }
+    }
+
+    if (this.micStream && !this.micSourceNode && this.inputAudioCtx) {
+      if (!this.inputAnalyser) {
+        this.inputAnalyser = this.inputAudioCtx.createAnalyser();
+        this.inputAnalyser.fftSize = 256;
+        this.inputAnalyser.smoothingTimeConstant = 0.3;
+      }
+      this.micSourceNode = this.inputAudioCtx.createMediaStreamSource(this.micStream);
+      this.micSourceNode.connect(this.inputAnalyser);
+
+      if (this.micProcessorNode) {
+        this.micSourceNode.connect(this.micProcessorNode);
+      }
+    }
+  }
+
   private connectWebSocket() {
     if (this.ws) {
       try {
         this.ws.onclose = null;
         this.ws.onerror = null;
+        this.ws.onmessage = null;
         this.ws.close();
       } catch (e) {}
       this.ws = null;
@@ -395,6 +614,8 @@ export class AkariAudioSession {
     if (this.lastAvatarStyle) params.set("avatarStyle", this.lastAvatarStyle);
     if (this.lastOwnerName) params.set("ownerName", this.lastOwnerName);
     if (this.lastSpeakerRecognition !== undefined) params.set("speakerRecognition", String(this.lastSpeakerRecognition));
+    if (this.lastPersonaPreset) params.set("personaPreset", this.lastPersonaPreset);
+    if (this.lastCustomSystemPrompt) params.set("customSystemPrompt", this.lastCustomSystemPrompt);
     const queryStr = params.toString() ? `?${params.toString()}` : "";
 
     const wsBase = getWsBaseUrl();
@@ -404,23 +625,33 @@ export class AkariAudioSession {
     this.ws.onopen = () => {
       console.log("[Akari Audio] Connected to WebSocket bridge on /live");
       this.isReconnecting = false;
+      this.reconnectAttempts = 0;
+      this.startHeartbeat();
       this.setState("listening");
     };
 
     this.ws.onmessage = async (event) => {
       try {
         const data = JSON.parse(event.data);
+        this.lastPongTime = Date.now();
+
+        if (data.type === "pong") {
+          return;
+        }
 
         if (data.type === "error") {
           console.warn("[Akari WS Server Error]:", data.error);
           const errStr = String(data.error || "").toLowerCase();
-          if (
-            errStr.includes("goaway") ||
-            errStr.includes("session duration") ||
-            errStr.includes("duration limit") ||
-            errStr.includes("connection aborted")
-          ) {
-            console.log("[Akari Audio] Session duration rollover detected. Silently auto-reconnecting...");
+          
+          if (errStr.includes("no_api_key")) {
+            this.onError(data.error);
+            return;
+          }
+
+          // If session duration rollover or any transient network/gemini error occurs,
+          // do NOT shut off Akari! Auto-reconnect seamlessly in the background!
+          if (this.isActivated) {
+            console.log("[Akari Audio] Server notice received. Silently auto-reconnecting to maintain connection...", data.error);
             this.triggerAutoReconnect();
             return;
           }
@@ -437,10 +668,14 @@ export class AkariAudioSession {
         if (data.type === "status") {
           console.log("[Akari WS Status]:", data.status);
           if (data.status === "connected") {
+            this.isReconnecting = false;
+            this.reconnectAttempts = 0;
             this.setState("listening");
           } else if (data.status === "session_closed") {
             // Auto-reconnect smoothly instead of killing mic
-            this.triggerAutoReconnect();
+            if (this.isActivated) {
+              this.triggerAutoReconnect();
+            }
           }
           return;
         }
@@ -448,7 +683,29 @@ export class AkariAudioSession {
         // Handle audio payload (24kHz PCM model response)
         if (data.type === "audio" && data.audio) {
           this.isModelTurnComplete = false;
+          if (!this.firstAudioChunkReceivedTime) {
+            this.firstAudioChunkReceivedTime = Date.now();
+            this.hasReportedPlaybackThisTurn = false;
+          }
           this.playAudioPCMChunk(data.audio);
+        }
+
+        // Filler line voice cue for tools taking > 2 seconds
+        if (data.type === "filler_line" && data.text) {
+          console.log("[Akari Audio] Filler voice announcement:", data.text);
+          if (typeof window !== "undefined" && "speechSynthesis" in window) {
+            try {
+              const utterance = new SpeechSynthesisUtterance(data.text);
+              utterance.rate = 1.15;
+              utterance.pitch = 1.1;
+              const voices = window.speechSynthesis.getVoices();
+              const femaleVoice = voices.find(v => v.name.toLowerCase().includes("female") || v.name.toLowerCase().includes("zira") || v.lang.startsWith("en"));
+              if (femaleVoice) utterance.voice = femaleVoice;
+              window.speechSynthesis.speak(utterance);
+            } catch (synthErr) {
+              console.warn("[Akari Audio] SpeechSynthesis note:", synthErr);
+            }
+          }
         }
 
         // Interruption signal
@@ -460,12 +717,15 @@ export class AkariAudioSession {
         // Turn complete
         if (data.type === "turnComplete") {
           this.isModelTurnComplete = true;
+          this.firstAudioChunkReceivedTime = 0;
+          this.hasReportedPlaybackThisTurn = false;
           if (this.activeSources.length === 0 && this.currentState === "speaking") {
+            this.echoSuppressionUntil = Date.now() + 450;
             setTimeout(() => {
               if (this.activeSources.length === 0 && this.currentState === "speaking" && this.isModelTurnComplete) {
                 this.setState("listening");
               }
-            }, 120);
+            }, 400);
           }
         }
 
@@ -528,8 +788,9 @@ export class AkariAudioSession {
       }
     };
 
-    this.ws.onclose = () => {
-      console.log("[Akari Audio] WS connection closed.");
+    this.ws.onclose = (ev) => {
+      console.log("[Akari Audio] WS connection closed.", ev.code, ev.reason);
+      this.stopHeartbeat();
       if (this.isActivated) {
         this.triggerAutoReconnect();
       }
@@ -544,30 +805,48 @@ export class AkariAudioSession {
   }
 
   private triggerAutoReconnect() {
-    if (!this.isActivated || this.isReconnecting) return;
-    this.isReconnecting = true;
-    this.setState("connecting");
+    if (!this.isActivated) return;
 
-    if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
-    this.reconnectTimeout = setTimeout(async () => {
-      if (!this.isActivated) return;
-      console.log("[Akari Audio] 🔄 Auto-reconnecting to maintain persistent microphone stream...");
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+
+    this.stopHeartbeat();
+    if (this.ws) {
       try {
-        if (this.inputAudioCtx && this.inputAudioCtx.state === "suspended") {
-          await this.inputAudioCtx.resume().catch(() => {});
-        }
-        if (this.outputAudioCtx && this.outputAudioCtx.state === "suspended") {
-          await this.outputAudioCtx.resume().catch(() => {});
-        }
+        this.ws.onclose = null;
+        this.ws.onerror = null;
+        this.ws.onmessage = null;
+        this.ws.close();
+      } catch (e) {}
+      this.ws = null;
+    }
+
+    this.isReconnecting = true;
+    if (this.currentState !== "connecting") {
+      this.setState("connecting");
+    }
+
+    this.reconnectAttempts++;
+    const backoffDelay = Math.min(600 * Math.pow(1.3, Math.min(this.reconnectAttempts - 1, 8)), 5000);
+    console.log(`[Akari Audio] 🔄 Resilient Auto-Reconnect (Attempt #${this.reconnectAttempts}) scheduled in ${Math.round(backoffDelay)}ms...`);
+
+    this.reconnectTimeout = setTimeout(async () => {
+      this.reconnectTimeout = null;
+      if (!this.isActivated) return;
+
+      try {
+        await this.ensureAudioAlive();
         this.connectWebSocket();
       } catch (err) {
-        console.warn("[Akari Audio] Reconnect failed, retrying in 2s:", err);
+        console.warn("[Akari Audio] Reconnection cycle failed, scheduling next retry:", err);
         this.isReconnecting = false;
         if (this.isActivated) {
-          this.reconnectTimeout = setTimeout(() => this.triggerAutoReconnect(), 2000);
+          this.triggerAutoReconnect();
         }
       }
-    }, 1000);
+    }, backoffDelay);
   }
 
   // Interruption handling (stops audio queue instantly)
@@ -585,6 +864,17 @@ export class AkariAudioSession {
     this.activeSources = [];
     this.nextStartTime = 0;
     this.setState("listening");
+  }
+
+  // Public method to cancel ongoing speech immediately (manual tap or shortcut)
+  public interrupt(): void {
+    if (this.currentState === "speaking" || this.activeSources.length > 0) {
+      this.handleInterruption();
+      this.echoSuppressionUntil = Date.now() + 250;
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify({ type: "interrupted" }));
+      }
+    }
   }
 
   // Jitter-buffered raw PCM chunk scheduled playback at 24kHz
@@ -629,6 +919,18 @@ export class AkariAudioSession {
       source.start(this.nextStartTime);
       this.nextStartTime += buffer.duration;
 
+      if (!this.hasReportedPlaybackThisTurn && this.firstAudioChunkReceivedTime > 0) {
+        const playbackLatency = Math.max(Date.now() - this.firstAudioChunkReceivedTime, 8);
+        this.hasReportedPlaybackThisTurn = true;
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({
+            type: "client_timing",
+            event: "audio_playback_started",
+            latencyMs: playbackLatency
+          }));
+        }
+      }
+
       source.onended = () => {
         const index = this.activeSources.indexOf(source);
         if (index > -1) {
@@ -636,24 +938,26 @@ export class AkariAudioSession {
         }
 
         if (this.activeSources.length === 0) {
+          // Keep mic shielded for 500ms after audio buffers finish physical output
+          this.echoSuppressionUntil = Date.now() + 500;
           if (this.speechEndTimer) clearTimeout(this.speechEndTimer);
 
           if (this.isModelTurnComplete) {
-            // Echo settling buffer before unmuting mic
+            // Echo settling buffer before unmuting mic and transitioning state
             this.speechEndTimer = setTimeout(() => {
               if (this.activeSources.length === 0 && this.currentState === "speaking" && this.isModelTurnComplete) {
                 this.setState("listening");
               }
-            }, 150);
+            }, 450);
           } else {
             // Model turn has NOT completed yet; more chunks may be on the way over the network.
-            // Generous fallback safety timeout (1500ms) prevents cutting off delayed words.
+            // Generous fallback safety timeout (3500ms) prevents network jitter pauses from prematurely cutting off speech.
             this.speechEndTimer = setTimeout(() => {
               if (this.activeSources.length === 0 && this.currentState === "speaking") {
                 this.isModelTurnComplete = true;
                 this.setState("listening");
               }
-            }, 1500);
+            }, 3500);
           }
         }
       };
@@ -680,6 +984,8 @@ export class AkariAudioSession {
   public disconnect() {
     this.isActivated = false;
     this.isReconnecting = false;
+    this.reconnectAttempts = 0;
+    this.stopHeartbeat();
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;

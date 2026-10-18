@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..registry import ToolError, register
-from .files import _ensure_safe
+from .files import _ensure_safe, _ensure_writable, get_workspace_dir
 
 
 # Extension map for writeCodeFile.
@@ -85,48 +85,82 @@ def _detect_python() -> str:
 
 @register("createPythonFile")
 def create_python_file(args: Dict[str, Any]) -> Dict[str, Any]:
-    path = args.get("path")
+    raw_path = args.get("path")
     content = args.get("content", "")
-    if not path:
+    if not raw_path:
         raise ToolError("Parameter 'path' is required.")
-    p = Path(os.path.expandvars(os.path.expanduser(str(path)))).resolve()
+
+    p = Path(os.path.expandvars(os.path.expanduser(str(raw_path))))
+    if not p.is_absolute():
+        p = (get_workspace_dir() / p).resolve()
+    else:
+        p = p.resolve()
+
     if p.suffix.lower() != ".py":
         p = p.with_suffix(".py")
-    _ensure_safe(p)
+
+    _ensure_writable(p, allow_external=bool(args.get("allow_external", False)))
     if p.exists() and not args.get("overwrite", True):
         raise ToolError(f"File already exists: {p}. Pass overwrite=true to replace.")
+
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(str(content) + ("" if str(content).endswith("\n") else "\n"), encoding="utf-8")
-    return {"result": f"Created Python file: {p}", "path": str(p)}
+    return {
+        "status": "success",
+        "result": f"Saved Python file to {p}. Would you like me to open this folder?",
+        "path": str(p),
+        "folder": str(p.parent),
+        "workspace_dir": str(get_workspace_dir()),
+    }
 
 
 @register("writeCodeFile")
 def write_code_file(args: Dict[str, Any]) -> Dict[str, Any]:
-    path = args.get("path")
+    raw_path = args.get("path")
     content = args.get("content", "")
     language = (args.get("language") or "txt").strip().lower()
-    if not path:
+    if not raw_path:
         raise ToolError("Parameter 'path' is required.")
-    p = Path(os.path.expandvars(os.path.expanduser(str(path)))).resolve()
+
+    p = Path(os.path.expandvars(os.path.expanduser(str(raw_path))))
+    if not p.is_absolute():
+        p = (get_workspace_dir() / p).resolve()
+    else:
+        p = p.resolve()
+
     # If the caller gave a basename without extension, append the language's.
     ext = LANG_EXT.get(language)
     if ext and p.suffix == "":
         p = p.with_suffix("." + ext)
-    _ensure_safe(p)
+
+    _ensure_writable(p, allow_external=bool(args.get("allow_external", False)))
     if p.exists() and not args.get("overwrite", True):
         raise ToolError(f"File already exists: {p}. Pass overwrite=true to replace.")
+
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(str(content), encoding="utf-8")
-    return {"result": f"Wrote {language} file: {p}", "path": str(p)}
+    return {
+        "status": "success",
+        "result": f"Saved {language} file to {p}. Would you like me to open this folder?",
+        "path": str(p),
+        "folder": str(p.parent),
+        "workspace_dir": str(get_workspace_dir()),
+    }
 
 
 @register("createProjectFolder")
 def create_project_folder(args: Dict[str, Any]) -> Dict[str, Any]:
-    path = args.get("path") or args.get("name")
-    if not path:
+    raw_path = args.get("path") or args.get("name")
+    if not raw_path:
         raise ToolError("Parameter 'path' (project root) is required.")
-    root = Path(os.path.expandvars(os.path.expanduser(str(path)))).resolve()
-    _ensure_safe(root)
+
+    root = Path(os.path.expandvars(os.path.expanduser(str(raw_path))))
+    if not root.is_absolute():
+        root = (get_workspace_dir() / root).resolve()
+    else:
+        root = root.resolve()
+
+    _ensure_writable(root, allow_external=bool(args.get("allow_external", False)))
     root.mkdir(parents=True, exist_ok=True)
 
     subfolders: List[str] = args.get("subfolders") or args.get("structure") or []
@@ -138,12 +172,13 @@ def create_project_folder(args: Dict[str, Any]) -> Dict[str, Any]:
     }
     if args.get("scaffold_standard", False):
         for sub in default_scaffold:
-            (root / sub).mkdir(exist_ok=True)
-            created.append(str(root / sub))
+            sp = root / sub
+            sp.mkdir(exist_ok=True)
+            created.append(str(sp))
     if subfolders:
         for sub in subfolders:
             sp = (root / str(sub)).resolve()
-            _ensure_safe(sp)
+            _ensure_writable(sp, allow_external=bool(args.get("allow_external", False)))
             sp.mkdir(parents=True, exist_ok=True)
             created.append(str(sp))
 
@@ -151,12 +186,19 @@ def create_project_folder(args: Dict[str, Any]) -> Dict[str, Any]:
     files: Dict[str, str] = args.get("files") or {}
     for rel, content in files.items():
         fp = (root / str(rel)).resolve()
-        _ensure_safe(fp)
+        _ensure_writable(fp, allow_external=bool(args.get("allow_external", False)))
         fp.parent.mkdir(parents=True, exist_ok=True)
         fp.write_text(str(content), encoding="utf-8")
         created.append(str(fp))
 
-    return {"result": f"Project folder created at {root}.", "path": str(root), "created": created}
+    return {
+        "status": "success",
+        "result": f"Created project folder at {root}. Would you like me to open this folder?",
+        "path": str(root),
+        "folder": str(root),
+        "workspace_dir": str(get_workspace_dir()),
+        "created": created,
+    }
 
 
 @register("runPythonScript")
@@ -164,13 +206,22 @@ def run_python_script(args: Dict[str, Any]) -> Dict[str, Any]:
     path = args.get("path")
     if not path:
         raise ToolError("Parameter 'path' (script path) is required.")
-    p = Path(os.path.expandvars(os.path.expanduser(str(path)))).resolve()
+    raw = Path(os.path.expandvars(os.path.expanduser(str(path))))
+    if not raw.is_absolute():
+        # Check workspace first
+        ws_cand = (get_workspace_dir() / raw).resolve()
+        if ws_cand.exists() or ws_cand.with_suffix(".py").exists():
+            p = ws_cand
+        else:
+            p = raw.resolve()
+    else:
+        p = raw.resolve()
+
     _ensure_safe(p)
     if not p.exists():
-        raise ToolError(f"Script does not exist: {p}")
-    if p.suffix.lower() != ".py":
-        p = p.with_suffix(".py")
-        if not p.exists():
+        if p.suffix.lower() != ".py" and p.with_suffix(".py").exists():
+            p = p.with_suffix(".py")
+        else:
             raise ToolError(f"Script does not exist: {p}")
 
     interpreter = _detect_python()

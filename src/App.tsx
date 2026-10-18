@@ -47,11 +47,13 @@ import { bondingEngine } from "./lib/bondingEngine";
 import { proactiveVision } from "./lib/proactiveVision";
 import { FloatingCompanion } from "./components/FloatingCompanion";
 import { openDesktopPetOverlay, closeDesktopPetOverlay, getPipContainer } from "./lib/desktopPet";
+import { detectUserEmotion, type UserEmotion } from "./lib/emotionDetector";
 
 export default function App() {
   const { user, isAuthenticated, openAuthModal } = useAuth();
   const [settings, setSettings] = useState<AkariSettings>(loadSettings());
   const [state, setState] = useState<LiveState>("disconnected");
+  const [detectedUserEmotion, setDetectedUserEmotion] = useState<UserEmotion | null>(null);
 
   // Next-Gen Advanced Superpowers
   const [isFloatingMode, setIsFloatingMode] = useState<boolean>(false);
@@ -104,7 +106,8 @@ export default function App() {
 
   const captureFrameAndSend = () => {
     const video = screenVideoRef.current;
-    if (!video || isPausedRef.current || !screenVisionRef.current) {
+    // Step 2.8: Limit screen-share frames to 1/sec and send them only while sharing is active
+    if (!isScreenSharing || !video || isPausedRef.current || !screenVisionRef.current) {
       return;
     }
 
@@ -185,8 +188,8 @@ export default function App() {
         stopScreenSharing();
       };
 
-      // Set up frame capture interval (4s in low bandwidth mode to save data, 2s in standard mode)
-      const captureIntervalMs = settings.lowBandwidthMode ? 4000 : 2000;
+      // Step 2.8: Limit screen-share frames to 1 per second (1000 ms)
+      const captureIntervalMs = 1000;
       if (screenIntervalRef.current) {
         clearInterval(screenIntervalRef.current);
       }
@@ -586,6 +589,9 @@ export default function App() {
     if (patch.avatarStyle && sessionRef.current) {
       sessionRef.current.updateAvatarStyle(patch.avatarStyle);
     }
+    if ((patch.personaPreset || patch.customSystemPrompt !== undefined) && sessionRef.current) {
+      sessionRef.current.updatePersona(next.personaPreset, next.customSystemPrompt);
+    }
   };
 
   const sessionRef = useRef<AkariAudioSession | null>(null);
@@ -656,9 +662,12 @@ export default function App() {
           // Auto-clear the other caption when user starts talking
           setModelCaption("");
           setCharacterState("thinking");
-          const userEmotion = detectEmotionFromText(text);
-          if (userEmotion !== "idle") {
-            setActiveEmotion(userEmotion);
+          const emotionRes = detectUserEmotion(text, micLevel);
+          if (emotionRes.companionReaction && emotionRes.companionReaction !== "idle") {
+            setActiveEmotion(emotionRes.companionReaction);
+          }
+          if (emotionRes.emotion !== "neutral") {
+            setDetectedUserEmotion(emotionRes.emotion);
           }
           setChatMessages((prev) => {
             const last = prev[prev.length - 1];
@@ -775,7 +784,12 @@ export default function App() {
           errStr.includes("goaway") ||
           errStr.includes("session duration") ||
           errStr.includes("duration limit") ||
-          errStr.includes("connection aborted")
+          errStr.includes("connection aborted") ||
+          errStr.includes("session_closed") ||
+          errStr.includes("session_recycle") ||
+          errStr.includes("1006") ||
+          errStr.includes("closed") ||
+          errStr.includes("gemini live")
         ) {
           console.log("[App] Suppressed transient session rollover notice:", err);
           return;
@@ -946,12 +960,22 @@ export default function App() {
     if (!sessionRef.current) return;
 
     if (state === "disconnected") {
-      await sessionRef.current.connect(
-        settings.voice, 
-        settings.avatarStyle,
-        settings.ownerName || "Siddhant",
-        settings.speakerRecognitionEnabled
-      );
+      try {
+        await sessionRef.current.connect(
+          settings.voice, 
+          settings.avatarStyle,
+          settings.ownerName || "Siddhant",
+          settings.speakerRecognitionEnabled,
+          settings.personaPreset || "anime_companion",
+          settings.customSystemPrompt
+        );
+      } catch (err: any) {
+        console.error("[App] Connection failed:", err);
+        const msg = err?.message || "Failed to start voice session.";
+        setErrorText(msg);
+        addToast(msg, "info");
+        setState("disconnected");
+      }
     } else {
       sessionRef.current.disconnect();
     }
@@ -981,6 +1005,16 @@ export default function App() {
     setUserCaption(displayTitle);
     setModelCaption("");
     setCharacterState("thinking");
+
+    if (trimmed) {
+      const emotionRes = detectUserEmotion(trimmed, 0.5);
+      if (emotionRes.companionReaction && emotionRes.companionReaction !== "idle") {
+        setActiveEmotion(emotionRes.companionReaction);
+      }
+      if (emotionRes.emotion !== "neutral") {
+        setDetectedUserEmotion(emotionRes.emotion);
+      }
+    }
 
     if (settings.offlineBrainEnabled) {
       const endpoint = (settings.ollamaEndpoint || "http://localhost:11434").replace(/\/+$/, "");
@@ -1344,10 +1378,22 @@ export default function App() {
                   )}
 
                   {textType === "user" && (
-                    <p className="text-cyan-300 font-mono text-sm sm:text-base tracking-wider flex items-center justify-center gap-2 drop-shadow-[0_1px_10px_rgba(0,0,0,0.85)] font-medium">
-                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_8px_cyan]" />
-                      <span>&ldquo;{activeText}&rdquo;</span>
-                    </p>
+                    <div className="flex flex-col items-center gap-1.5">
+                      <p className="text-cyan-300 font-mono text-sm sm:text-base tracking-wider flex items-center justify-center gap-2 drop-shadow-[0_1px_10px_rgba(0,0,0,0.85)] font-medium">
+                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_8px_cyan]" />
+                        <span>&ldquo;{activeText}&rdquo;</span>
+                      </p>
+                      {detectedUserEmotion && (
+                        <motion.span
+                          initial={{ opacity: 0, scale: 0.9 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] uppercase font-mono tracking-widest bg-cyan-950/70 text-cyan-300 border border-cyan-500/30 backdrop-blur-md shadow-sm"
+                        >
+                          <span className="w-1 h-1 rounded-full bg-cyan-400 animate-ping" />
+                          Mood: {detectedUserEmotion}
+                        </motion.span>
+                      )}
+                    </div>
                   )}
 
                   {textType === "status" && (

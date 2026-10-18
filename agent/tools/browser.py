@@ -615,11 +615,25 @@ async def browser_media_control(args: Dict[str, Any]) -> Dict[str, Any]:
                  "fullscreen": "Fullscreen toggled", "exit_fullscreen": "Fullscreen toggled",
                  "skip": "Skipped forward 10s", "rewind": "Rewound 10s"}.get(action, action)
         return {"result": f"{label} via keyboard shortcut."}
-    else:
-        raise ToolError(f"Unknown action '{action}'. Valid: play, pause, volume, mute, unmute, fullscreen, exit_fullscreen, skip, rewind.")
+def warm_browser() -> None:
+    """Pre-warm Playwright Chromium session in a background thread so browser tools execute without cold-start delay."""
+    import logging
+    log = logging.getLogger("akari.desktop")
+
+    def _warm():
+        try:
+            log.info("[Browser Warmup] Pre-warming Playwright browser session...")
+            _run(_ensure_browser_async())
+            log.info("[Browser Warmup] Playwright browser session is warm and ready.")
+        except Exception as e:
+            log.warning("[Browser Warmup] Non-critical browser warmup note: %s", e)
+
+    t = threading.Thread(target=_warm, daemon=True, name="AkariBrowserWarmup")
+    t.start()
 
 
 __all__ = [
+    "warm_browser",
     "browser_open",
     "browser_navigate",
     "browser_open_tab",

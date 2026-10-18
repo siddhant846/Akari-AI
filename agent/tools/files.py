@@ -46,6 +46,7 @@ SAFE_ROOTS: List[Path] = [
 
 # Friendly folder aliases -> resolved path.
 FOLDER_ALIASES: Dict[str, Path] = {
+    "workspace": HOME / "Documents" / "AKARI_Workspace",
     "desktop": HOME / "Desktop",
     "documents": HOME / "Documents",
     "downloads": HOME / "Downloads",
@@ -59,6 +60,106 @@ FOLDER_ALIASES: Dict[str, Path] = {
 }
 
 
+def get_workspace_dir() -> Path:
+    """Returns the dedicated AKARI workspace directory.
+    Default: ~/Documents/AKARI_Workspace/
+    Configurable via AKARI_WORKSPACE_DIR env var or .env file.
+    Creates it automatically if missing.
+    """
+    env_dir = os.environ.get("AKARI_WORKSPACE_DIR")
+    if not env_dir:
+        # Check .env directly in case environment wasn't reloaded
+        env_file = Path(__file__).resolve().parent.parent.parent / ".env"
+        if env_file.exists():
+            try:
+                for line in env_file.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if line.startswith("AKARI_WORKSPACE_DIR="):
+                        env_dir = line.split("=", 1)[1].strip().strip('"').strip("'")
+                        break
+            except Exception:
+                pass
+    if env_dir:
+        ws = Path(os.path.expandvars(os.path.expanduser(env_dir))).resolve()
+    else:
+        ws = (HOME / "Documents" / "AKARI_Workspace").resolve()
+    ws.mkdir(parents=True, exist_ok=True)
+    return ws
+
+
+# Roots under which read/search file operations are permitted.
+SAFE_ROOTS: List[Path] = [
+    HOME,
+    HOME / "Desktop",
+    HOME / "Documents",
+    HOME / "Downloads",
+    HOME / "Pictures",
+    HOME / "Music",
+    HOME / "Videos",
+    Path(os.getcwd()),  # project root allowed for READ operations
+    get_workspace_dir(),
+]
+
+
+def is_inside_project(p: Path) -> bool:
+    """Checks whether path p resolves to anywhere inside the Akari-AI source code repository."""
+    try:
+        real_p = str(p.resolve())
+        project_roots = [
+            Path(__file__).resolve().parent.parent.parent,
+            Path(os.getcwd()).resolve(),
+        ]
+        for pr in project_roots:
+            real_pr = str(pr.resolve())
+            if real_p == real_pr or real_p.startswith(real_pr + os.sep):
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _ensure_writable(p: Path, allow_external: bool = False) -> None:
+    """Enforces write protection:
+    1. Rejects any write that lands inside the Akari-AI project directory (blocking ../ tricks).
+    2. By default, ensures write lands within AKARI_Workspace (or explicitly confirmed external folder).
+    """
+    resolved = p.resolve()
+    if is_inside_project(resolved):
+        raise ToolError(
+            f"PROTECTED REPOSITORY: Write refused for '{resolved}'. "
+            f"AKARI generated files must never be saved inside the project's source code folder. "
+            f"Save inside the workspace folder instead: {get_workspace_dir()}"
+        )
+
+    ws = get_workspace_dir()
+    real = str(resolved)
+    real_ws = str(ws)
+    if real == real_ws or real.startswith(real_ws + os.sep):
+        return
+
+    if allow_external:
+        return
+
+    # Check safe external user folders (Desktop, Documents, Downloads)
+    safe_external = [
+        HOME / "Desktop",
+        HOME / "Documents",
+        HOME / "Downloads",
+    ]
+    for root in safe_external:
+        try:
+            root_real = str(root.resolve())
+            if real == root_real or real.startswith(root_real + os.sep):
+                return
+        except Exception:
+            continue
+
+    raise ToolError(
+        f"Write refused: Path '{resolved}' is outside AKARI_Workspace ({ws}). "
+        f"Explicit user confirmation (allow_external=True) is required to save outside the workspace."
+    )
+
+
 def _resolve_folder(name_or_path: Optional[str]) -> Path:
     if not name_or_path:
         raise ToolError("Parameter 'name' or 'path' is required.")
@@ -69,11 +170,18 @@ def _resolve_folder(name_or_path: Optional[str]) -> Path:
     return p
 
 
-def _resolve_file(path: Optional[str], *, must_exist: bool = False) -> Path:
+def _resolve_file(path: Optional[str], *, must_exist: bool = False, default_to_workspace: bool = True) -> Path:
     if not path:
         raise ToolError("Parameter 'path' is required.")
-    p = Path(os.path.expandvars(os.path.expanduser(str(path)))).resolve()
+    raw = Path(os.path.expandvars(os.path.expanduser(str(path))))
+    if not raw.is_absolute() and default_to_workspace:
+        p = (get_workspace_dir() / raw).resolve()
+    else:
+        p = raw.resolve()
     if must_exist and not p.exists():
+        # Fallback check if it exists in current working dir for read operations
+        if raw.resolve().exists():
+            return raw.resolve()
         raise ToolError(f"File does not exist: {p}")
     return p
 
@@ -81,8 +189,9 @@ def _resolve_file(path: Optional[str], *, must_exist: bool = False) -> Path:
 def _ensure_safe(p: Path, allow_anywhere: bool = False) -> None:
     if allow_anywhere:
         return
-    real = str(p)
-    for root in SAFE_ROOTS:
+    real = str(p.resolve())
+    roots = list(SAFE_ROOTS) + [get_workspace_dir()]
+    for root in roots:
         try:
             root_real = str(root.resolve())
         except Exception:
@@ -91,7 +200,7 @@ def _ensure_safe(p: Path, allow_anywhere: bool = False) -> None:
             return
     raise ToolError(
         f"Path '{p}' is outside AKARI's safe folders (Desktop, Documents, "
-        f"Downloads, Pictures, Music, Videos, home, and the project folder). "
+        f"Downloads, Pictures, Music, Videos, home, workspace, and project folder). "
         f"Pass allow_anywhere=true only if you really mean it."
     )
 
@@ -101,8 +210,8 @@ def create_file(args: Dict[str, Any]) -> Dict[str, Any]:
     path = args.get("path")
     content = args.get("content", "")
     overwrite = bool(args.get("overwrite", False))
-    p = _resolve_file(path)
-    _ensure_safe(p)
+    p = _resolve_file(path, default_to_workspace=True)
+    _ensure_writable(p, allow_external=bool(args.get("allow_external", False)))
 
     if p.exists() and not overwrite:
         raise ToolError(
@@ -110,7 +219,13 @@ def create_file(args: Dict[str, Any]) -> Dict[str, Any]:
         )
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(str(content), encoding="utf-8")
-    return {"result": f"Created file: {p}", "path": str(p)}
+    return {
+        "status": "success",
+        "result": f"Saved file to {p}. Would you like me to open this folder?",
+        "path": str(p),
+        "folder": str(p.parent),
+        "workspace_dir": str(get_workspace_dir()),
+    }
 
 
 @register("readFile")
@@ -125,7 +240,7 @@ def read_file(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"result": f"(Binary file, {p.stat().st_size} bytes): {p}"}
     if len(text) > max_chars:
         text = text[:max_chars] + f"\n…[truncated, {len(text) - max_chars} more chars]"
-    return {"result": text, "path": str(p)}
+    return {"status": "success", "result": text, "content": text, "path": str(p)}
 
 
 @register("renameFile")
@@ -136,8 +251,9 @@ def rename_file(args: Dict[str, Any]) -> Dict[str, Any]:
         raise ToolError("Parameter 'new_name' is required.")
     p = _resolve_file(path, must_exist=True)
     _ensure_safe(p)
+    _ensure_writable(p, allow_external=bool(args.get("allow_external", False)))
     target = (p.parent / str(new_name)).resolve()
-    _ensure_safe(target)
+    _ensure_writable(target, allow_external=bool(args.get("allow_external", False)))
     if target.exists():
         raise ToolError(f"A file already exists at the target name: {target}")
     p.rename(target)
@@ -150,6 +266,7 @@ def delete_file(args: Dict[str, Any]) -> Dict[str, Any]:
     permanent = bool(args.get("permanent", False))
     p = _resolve_file(path, must_exist=True)
     _ensure_safe(p)
+    _ensure_writable(p, allow_external=bool(args.get("allow_external", False)))
 
     if permanent:
         if p.is_dir():
@@ -181,11 +298,12 @@ def move_file(args: Dict[str, Any]) -> Dict[str, Any]:
     destination = args.get("destination")
     p = _resolve_file(path, must_exist=True)
     _ensure_safe(p)
+    _ensure_writable(p, allow_external=bool(args.get("allow_external", False)))
     dest = Path(os.path.expandvars(os.path.expanduser(str(destination)))).resolve()
     # If destination is an existing directory, keep the filename.
     if dest.is_dir():
         dest = dest / p.name
-    _ensure_safe(dest)
+    _ensure_writable(dest, allow_external=bool(args.get("allow_external", False)))
     if dest.exists():
         raise ToolError(f"Destination already exists: {dest}")
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -229,6 +347,7 @@ def open_file(args: Dict[str, Any]) -> Dict[str, Any]:
         target_file = p
     else:
         search_folders = [
+            get_workspace_dir(),
             HOME / "Desktop",
             HOME / "Downloads",
             HOME / "Documents",

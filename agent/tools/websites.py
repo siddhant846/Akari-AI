@@ -55,7 +55,7 @@ def _normalize_url(raw: str) -> str:
     return url
 
 
-def open_url(url: str) -> str:
+def open_url(url: str, bring_to_front: bool = True) -> str:
     """Open a URL in the default browser; returns the resolved URL."""
     url = _normalize_url(url)
     if sys.platform == "win32":
@@ -67,19 +67,23 @@ def open_url(url: str) -> str:
             except Exception:
                 webbrowser.open(url, new=2)
 
-        # Ensure the user's browser is brought to the active foreground
-        try:
-            from ..backends import get_backend
-            wm = get_backend().window_manager
-            import time
-            time.sleep(0.15)
-            for b_name in ["chrome", "msedge", "edge", "firefox", "brave"]:
-                h = wm.find_window_by_title(b_name)
-                if h:
-                    wm.focus(h)
-                    break
-        except Exception:
-            pass
+        if bring_to_front:
+            # Ensure the user's browser is brought to the active foreground without occluding Akari
+            try:
+                from ..backends import get_backend
+                wm = get_backend().window_manager
+                import time
+                time.sleep(0.15)
+                for b_name in ["chrome", "msedge", "edge", "firefox", "brave"]:
+                    h = wm.find_window_by_title(b_name)
+                    if h:
+                        title = str(wm.get_window_title(h) or "").lower()
+                        # Do not focus over Akari if the window is Akari itself
+                        if "akari" not in title and "localhost:3000" not in title:
+                            wm.focus(h)
+                            break
+            except Exception:
+                pass
         return url
 
     ok = webbrowser.open(url, new=2)

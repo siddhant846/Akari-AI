@@ -33,6 +33,7 @@ export class VoiceBiometricEngine {
   private isCalibrating: boolean = false;
   private backgroundLearning: boolean = true;
   private calibrationSamples: { pitch: number; centroid: number }[] = [];
+  private analysisWindow: Float32Array = new Float32Array(2048);
   private onStatusChange?: (result: SpeakerIdentificationResult) => void;
   private lastResult: SpeakerIdentificationResult = {
     isOwner: true,
@@ -60,7 +61,7 @@ export class VoiceBiometricEngine {
   public resetTrainingProfile(): VoiceProfile {
     this.profile = {
       meanPitch: 125,
-      pitchStdDev: 20,
+      pitchStdDev: 25,
       spectralCentroid: 1400,
       sampleCount: 0,
       lastUpdated: Date.now()
@@ -99,9 +100,9 @@ export class VoiceBiometricEngine {
 
       this.profile = {
         meanPitch: Math.round(meanPitch),
-        pitchStdDev: Math.round(stdDev) || 18,
+        pitchStdDev: Math.max(22, Math.round(stdDev)),
         spectralCentroid: Math.round(meanCentroid),
-        sampleCount: this.calibrationSamples.length,
+        sampleCount: Math.max(50, this.calibrationSamples.length),
         lastUpdated: Date.now()
       };
       this.saveProfile();
@@ -110,7 +111,7 @@ export class VoiceBiometricEngine {
   }
 
   /**
-   * Analyzes an incoming 16kHz Float32 or Int16 audio buffer frame.
+   * Analyzes an incoming Float32 or Int16 audio buffer frame at actual hardware sampleRate.
    */
   public processAudioFrame(samples: Float32Array | Int16Array, sampleRate: number = 16000): SpeakerIdentificationResult {
     // 1. Convert to normalized float array [-1.0, 1.0] if Int16
@@ -124,7 +125,16 @@ export class VoiceBiometricEngine {
       floatBuffer = samples;
     }
 
-    // 2. Compute RMS Energy (filter out silence / ambient fan noise)
+    // 2. Push frame into 2048-sample analysis ring buffer for accurate F0 detection across all sample rates
+    const len = floatBuffer.length;
+    if (len < this.analysisWindow.length) {
+      this.analysisWindow.copyWithin(0, len);
+      this.analysisWindow.set(floatBuffer, this.analysisWindow.length - len);
+    } else {
+      this.analysisWindow.set(floatBuffer.subarray(len - this.analysisWindow.length));
+    }
+
+    // 3. Compute RMS Energy (filter out silence / ambient fan noise)
     let sumSquares = 0;
     for (let i = 0; i < floatBuffer.length; i++) {
       sumSquares += floatBuffer[i] * floatBuffer[i];
@@ -142,15 +152,15 @@ export class VoiceBiometricEngine {
       };
     }
 
-    // 3. Autocorrelation Pitch Extraction (F0)
-    const pitch = this.detectPitchAutocorrelation(floatBuffer, sampleRate);
-    if (pitch < 60 || pitch > 450) {
-      // Unvoiced consonant or noise frame
+    // 4. Autocorrelation Pitch Extraction (F0) on the full 2048 analysis window
+    const pitch = this.detectPitchAutocorrelation(this.analysisWindow, sampleRate);
+    if (pitch < 55 || pitch > 480) {
+      // Unvoiced consonant or noise frame — retain previous verification state
       return this.lastResult;
     }
 
-    // 4. Spectral Centroid calculation (brightness/timbre)
-    const centroid = this.calculateSpectralCentroid(floatBuffer, sampleRate);
+    // 5. Spectral Centroid calculation (brightness/timbre)
+    const centroid = this.calculateSpectralCentroid(this.analysisWindow, sampleRate);
 
     // If currently in calibration mode, collect sample
     if (this.isCalibrating) {
@@ -167,42 +177,38 @@ export class VoiceBiometricEngine {
       return res;
     }
 
-    // 5. Compare against Owner Profile
-    let confidence = 0.90;
+    // 6. Compare against Owner Profile with Adaptive Learning
+    let confidence = 0.95;
     let isOwner = true;
 
-    if (this.profile.sampleCount > 0) {
+    // Active Enrollment Phase: if under 40 samples, adapt seamlessly to the user speaking at this workstation
+    if (this.profile.sampleCount < 40) {
+      isOwner = true;
+      confidence = 0.95;
+      this.adaptProfile(pitch, centroid);
+    } else {
       const pitchDiff = Math.abs(pitch - this.profile.meanPitch);
       const centroidDiff = Math.abs(centroid - this.profile.spectralCentroid);
 
-      // Pitch score (normal voice fluctuates within ~2-3 stdDevs)
-      const allowedPitchRange = Math.max(35, this.profile.pitchStdDev * 2.5);
-      let pitchScore = Math.max(0, 1.0 - (pitchDiff / allowedPitchRange));
+      // Pitch score: allow normal natural human inflection (wide variance up to 3.5 stdDevs or 65Hz)
+      const allowedPitchRange = Math.max(65, this.profile.pitchStdDev * 3.5);
+      const pitchScore = Math.max(0, 1.0 - (pitchDiff / allowedPitchRange));
 
       // Spectral timbre score
-      let timbreScore = Math.max(0, 1.0 - (centroidDiff / 1200));
+      const timbreScore = Math.max(0, 1.0 - (centroidDiff / 1600));
 
-      confidence = (pitchScore * 0.65) + (timbreScore * 0.35);
+      confidence = (pitchScore * 0.55) + (timbreScore * 0.45);
 
-      if (confidence >= 0.68) {
+      if (confidence >= 0.48) {
         isOwner = true;
-        // Adaptive continuous learning: gently nudge profile weights if training mode is active
+        // Continuous adaptive learning: smoothly refine vocal model
         if (this.backgroundLearning) {
           this.adaptProfile(pitch, centroid);
         }
       } else {
+        // Only classify as guest if there is a severe mismatch
         isOwner = false;
       }
-    } else {
-      // Auto-enroll on first session if not calibrated yet
-      this.profile = {
-        meanPitch: Math.round(pitch),
-        pitchStdDev: 22,
-        spectralCentroid: Math.round(centroid),
-        sampleCount: 1,
-        lastUpdated: Date.now()
-      };
-      this.saveProfile();
     }
 
     const speakerType = isOwner ? "owner" : "guest";
@@ -230,13 +236,13 @@ export class VoiceBiometricEngine {
   }
 
   private adaptProfile(pitch: number, centroid: number) {
-    const alpha = 0.02; // Slow exponential moving average for smooth adaptation
+    const alpha = 0.03; // Smooth adaptive learning
     this.profile.meanPitch = (1 - alpha) * this.profile.meanPitch + alpha * pitch;
     this.profile.spectralCentroid = (1 - alpha) * this.profile.spectralCentroid + alpha * centroid;
     this.profile.sampleCount += 1;
     
-    // Save to disk every 100 samples
-    if (this.profile.sampleCount % 100 === 0) {
+    // Save to disk every 50 samples
+    if (this.profile.sampleCount % 50 === 0) {
       this.profile.lastUpdated = Date.now();
       this.saveProfile();
     }
@@ -244,7 +250,6 @@ export class VoiceBiometricEngine {
 
   private detectPitchAutocorrelation(buffer: Float32Array, sampleRate: number): number {
     const SIZE = buffer.length;
-    const MAX_SAMPLES = Math.floor(SIZE / 2);
     let bestOffset = -1;
     let bestCorrelation = 0;
     let rms = 0;
@@ -255,15 +260,20 @@ export class VoiceBiometricEngine {
     rms = Math.sqrt(rms / SIZE);
     if (rms < 0.01) return 0;
 
-    let lastCorrelation = 1;
-    for (let offset = Math.floor(sampleRate / 450); offset < Math.floor(sampleRate / 65); offset++) {
-      let correlation = 0;
-      for (let i = 0; i < MAX_SAMPLES; i++) {
-        correlation += Math.abs(buffer[i] - buffer[i + offset]);
-      }
-      correlation = 1 - (correlation / MAX_SAMPLES);
+    const minOffset = Math.max(2, Math.floor(sampleRate / 450));
+    const maxOffset = Math.min(Math.floor(sampleRate / 55), Math.floor(SIZE / 2));
+    const MAX_SAMPLES = SIZE - maxOffset;
+    if (MAX_SAMPLES <= 0) return 0;
 
-      if (correlation > 0.85 && correlation > lastCorrelation) {
+    let lastCorrelation = 1;
+    for (let offset = minOffset; offset < maxOffset; offset++) {
+      let diff = 0;
+      for (let i = 0; i < MAX_SAMPLES; i++) {
+        diff += Math.abs(buffer[i] - buffer[i + offset]);
+      }
+      const correlation = 1 - (diff / MAX_SAMPLES);
+
+      if (correlation > 0.80 && correlation > lastCorrelation) {
         if (correlation > bestCorrelation) {
           bestCorrelation = correlation;
           bestOffset = offset;
@@ -272,7 +282,7 @@ export class VoiceBiometricEngine {
       lastCorrelation = correlation;
     }
 
-    if (bestCorrelation > 0.75 && bestOffset > 0) {
+    if (bestCorrelation > 0.70 && bestOffset > 0) {
       return sampleRate / bestOffset;
     }
     return 0;

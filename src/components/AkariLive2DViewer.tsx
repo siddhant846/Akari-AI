@@ -117,13 +117,15 @@ export const AkariLive2DViewer: React.FC<AkariLive2DViewerProps> = ({
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
 
+    const isMobile = typeof window !== "undefined" && (window.innerWidth < 768 || Boolean((window as any).Capacitor));
     const app = new PIXI.Application({
       width,
       height,
       backgroundAlpha: 0,
-      antialias: true,
-      resolution: window.devicePixelRatio || 1,
+      antialias: !isMobile,
+      resolution: Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2),
       autoDensity: true,
+      powerPreference: "high-performance",
     });
 
     appRef.current = app;
@@ -131,7 +133,7 @@ export const AkariLive2DViewer: React.FC<AkariLive2DViewerProps> = ({
 
     const loadModel = async () => {
       try {
-        const model = await Live2DModel.from("/live2d/akari/akari.model3.json", {
+        const model = await Live2DModel.from("./live2d/akari/akari.model3.json", {
           autoInteract: false,
           idleMotionGroup: "Idle",
         });

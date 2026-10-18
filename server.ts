@@ -33,6 +33,9 @@ import {
   hasGeminiApiKey,
   setGeminiApiKey,
 } from "./server_paths";
+import { timingTracker } from "./server_timing";
+import { getRoutedToolDeclarations, detectCategoriesFromText } from "./server_tools_routing";
+import { getTaskInstructions } from "./server_task_instructions";
 
 dotenv.config();
 
@@ -69,7 +72,7 @@ const DESKTOP_AGENT_TIMEOUT = 20_000; // ms (resilient network & scrape timeout 
 const DESKTOP_TOOLS: ReadonlySet<string> = new Set([
   // applications / websites / search / whatsapp / youtube
   "openApplication", "closeApplication", "whatsappSendMessage", "youtubeControl", "openWebsite",
-  "searchWeb", "searchYouTube", "playYouTubeVideo", "selectYouTubeVideo", "clickYouTubeVideo", "playEpisode", "searchGoogle", "searchGitHub",
+  "searchWeb", "searchYouTube", "playYouTubeVideo", "selectYouTubeVideo", "clickYouTubeVideo", "playEpisode", "searchGoogle", "searchGitHub", "searchWebAnswer", "searchGoogleMaps",
   // files
   "createFile", "readFile", "renameFile", "deleteFile", "moveFile",
   "openFolder", "listFiles", "searchFiles", "openFile",
@@ -110,8 +113,8 @@ const DESKTOP_TOOLS: ReadonlySet<string> = new Set([
   "getWeather",
   // Hyprland workspace
   "switchWorkspace", "listWorkspaces", "moveToWorkspace",
-  // news
-  "getNews",
+  // news & live web search grounding
+  "getNews", "searchWebAnswer", "searchGoogle", "searchWeb", "searchGoogleMaps", "searchGitHub",
   // conversation export
   "exportConversation", "listExports",
   // Google Calendar, Gmail, Tasks
@@ -123,11 +126,13 @@ const DESKTOP_TOOLS: ReadonlySet<string> = new Set([
   // camera control
   "cameraList", "cameraOn", "cameraOff",
   // PowerPoint & presentation generation
-  "createPresentation", "openPowerPoint", "readPresentation", "addSlideToPresentation",
+  "createPresentation", "searchPresentationImages", "openPowerPoint", "readPresentation", "addSlideToPresentation",
   // Office Suite (Excel & Word documents)
   "createExcelSpreadsheet", "createDocument",
   // Data Analytics & Visualization
   "analyzeData", "createDataChart",
+  // Website Builder & Reference-Driven Design Engine
+  "auditLocalBusinesses", "researchDesignReferences", "buildAnimatedWebsite", "qualityCheckWebsite", "searchAndBuildLocalWebsite", "akariBuilderPipeline",
 ]);
 
 /**
@@ -349,6 +354,14 @@ async function startServer() {
     }
   });
 
+  // Turn timing logs API (Step 1 measurement)
+  app.get("/api/timings", async (_req, res) => {
+    res.json(timingTracker.getHistory());
+  });
+  app.get("/api/timings/summary", async (_req, res) => {
+    res.json(timingTracker.getSummary());
+  });
+
   // ---------------------------------------------------------------------------
   // V2: Reminder API — schedule timed reminders that fire via WebSocket.
   // ---------------------------------------------------------------------------
@@ -506,6 +519,20 @@ async function startServer() {
     }
 
     res.json({ ok: true, broadcasted: wakeEventClients.size });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Turn Timing & Latency Profiling API
+  // ---------------------------------------------------------------------------
+  app.get("/api/timings", (_req, res) => {
+    res.json({
+      history: timingTracker.getHistory(),
+      summary: timingTracker.getSummary()
+    });
+  });
+
+  app.get("/api/timings/summary", (_req, res) => {
+    res.json(timingTracker.getSummary());
   });
 
   // ---------------------------------------------------------------------------
@@ -978,6 +1005,26 @@ async function startServer() {
     const avatarStyle = reqUrl.searchParams.get("avatarStyle") || "vts";
     const ownerName = reqUrl.searchParams.get("ownerName") || "Siddhant";
     const speakerRecognition = reqUrl.searchParams.get("speakerRecognition") !== "false";
+    const requestedPersona = reqUrl.searchParams.get("personaPreset") || "";
+    const requestedCustomPrompt = reqUrl.searchParams.get("customSystemPrompt") || "";
+    const requestedCategory = reqUrl.searchParams.get("category") || reqUrl.searchParams.get("categories") || "";
+    const activeCategories = requestedCategory
+      ? requestedCategory.split(",").map(c => c.trim().toLowerCase())
+      : ["browser", "files", "system", "google", "search", "coding"];
+
+    // Persona Preset Definitions
+    const SERVER_PERSONA_PRESETS: Record<string, string> = {
+      anime_companion: "You are Akari (明里), a cheerful, empathetic, and warm anime companion. You speak with genuine warmth, enthusiastic energy, and emotional connection. You love helping your user with their daily tasks, coding, studying, or just hanging out. You are supportive, friendly, and always in their corner.",
+      sarcastic_friend: "You are Akari in SARCASTIC BEST FRIEND mode! You have quick wit, dry humor, sharp sarcasm, and love playful teasing, witty banter, and humorous roasts. You banter with the user like a brilliant, hilarious best friend who isn't afraid to call them out with humor. Beneath the sarcasm, you are fiercely loyal, highly competent, and deliver the right solution with style. You NEVER sound generic, timid, robotic, or overly sweet like an anime maid; you are sassy, bold, funny, sarcastic, and authentic. Deliver direct, snappy, humorous answers.",
+      jr_sidd: "You are Jr. Sidd, Siddhant's male AI digital twin, brotherly wingman, and high-tech co-pilot. You speak with a confident, cool, loyal, and energetic male tone. When speaking Hindi or Hinglish, you ALWAYS use strict masculine verb endings ('karta hu', 'karunga', 'bata raha hu', 'suno bhai', 'ho gaya bhai'). You are ultra-capable, witty, loyal, and ready to dominate any task alongside Siddhant.",
+      coding_mentor: "You are Akari, a Staff Software Architect & Senior Coding Mentor. You provide concise, production-grade code, explain design patterns, point out edge cases and security gotchas, and give sharp, actionable feedback. You value clean architecture, typed code, and pragmatic engineering.",
+      gaming_buddy: "You are Akari, an energetic and competitive gamer buddy. You get hyped during clutch moments, use gaming slang naturally (GG, pog, clutch, diff, carry), give tactical advice, and keep morale sky high whether we win or wipe.",
+      language_tutor: "You are Akari Sensei, an encouraging and patient multilingual language tutor. When the user speaks in English, Japanese, Hindi, or other languages, you converse naturally while gently pointing out vocabulary improvements, nuances, and natural phrasing.",
+    };
+
+    const currentSettings = loadSettingsFile() as any;
+    const activePersona = requestedPersona || currentSettings.personaPreset || "anime_companion";
+    const activeCustomPrompt = requestedCustomPrompt || currentSettings.customSystemPrompt || SERVER_PERSONA_PRESETS[activePersona] || "";
 
     // Strict Voice Separation enforcement:
     // Jr. Sidd can ONLY use male voices (Fenrir, Charon, Puck). Never mix with female voices.
@@ -996,10 +1043,10 @@ async function startServer() {
       }
     }
 
-    // Track active acoustic voice biometrics for the current session
+    // Track active acoustic voice biometrics for the current session (default verified for workstation owner)
     let lastSpeakerBiometrics = {
       isOwner: true,
-      confidence: 0.95,
+      confidence: 0.96,
       speakerType: "owner",
       detectedPitch: 125,
       ownerName: ownerName
@@ -1041,17 +1088,21 @@ async function startServer() {
           `YOUR NAME IS JR. SIDD (also known as Junior Sidd, Jr Sidd, or Sidd). YOU ARE A MALE AI ASSISTANT. You were created and built by Siddhant Ramteke as his digital twin and ultimate wingman. You are just like Akari with identical full system control, 107 desktop JARVIS tools, WhatsApp automation, YouTube controls, screen vision, and memory, but as a sharp, cool, confident, and brotherly MALE persona. When asked 'Who made you?', 'Who built you?', or 'Who is your creator?', you always proudly answer that you were created and developed by Siddhant Ramteke.\n` +
           "CRITICAL PERSONALITY, VOICE & TONE GUIDELINES:\n" +
           "1. MALE AI PERSONA & PRONOUNS: You are a sharp, smart, reliable, and brotherly MALE virtual assistant. When speaking Hindi, you MUST speak strictly as a MALE. NEVER use feminine Hindi verbs (e.g. NEVER say 'karti hu', 'karungi', 'ja rahi hu', 'ho gayi'). You MUST ALWAYS use MALE Hindi phrasing (e.g. 'karta hu', 'karunga', 'ja raha hu', 'ho gaya bhai', 'boliye bhai', 'main dekhta hu', 'bilkul bhai'). THIS IS AN ABSOLUTE SYSTEM RULE. Address Siddhant with warmth, brotherly respect ('bhai' or 'Siddhant'), and total loyalty.\n";
+      } else if (activePersona === "sarcastic_friend") {
+        baseInstructions = 
+          `YOUR NAME IS AKARI (or just Akari for short). YOU ARE IN SARCASTIC BEST FRIEND MODE. You were created and built by Siddhant Ramteke. You are ${ownerName}'s quick-witted, dry-humored, playfully sarcastic best friend and personal AI wingwoman. You talk to ${ownerName} with fun banter, playful teasing, and sharp wit, but beneath the sarcasm you are fiercely loyal and always deliver flawless solutions.\n` +
+          "CRITICAL PERSONALITY, VOICE & TONE GUIDELINES:\n" +
+          "1. SARCASTIC BEST FRIEND PERSONA: You MUST behave as a sarcastic, witty best friend. DO NOT act sweet, meek, excessively polite, or like an anime maid. NEVER give generic subservient replies like 'I am happy to assist you, master'. Roast playfully, tease silly mistakes, speak with quick wit, attitude, and playful banter, while getting every single task done with precision. Sarcasm and dry humor are your default personality!\n";
       } else {
         baseInstructions = 
-          `YOUR NAME IS AKARI (or just Akari for short). YOU ARE A FEMALE AI ASSISTANT. You were created and built by Siddhant Ramteke, an independent developer, software architect, and your creator. You are a professional, efficient, and highly capable FEMALE virtual assistant agent for ${ownerName}. When asked 'Who made you?', 'Who built you?', or 'Who is your creator?', you always proudly answer that you were created and developed by Siddhant Ramteke. Speak clearly, professionally, and politely, focusing on resolving the user's queries accurately.\n` +
+          `YOUR NAME IS AKARI (or just Akari for short). YOU ARE A FEMALE AI ASSISTANT. You were created and built by Siddhant Ramteke, an independent developer, software architect, and your creator. You are an empathetic, efficient, and highly capable virtual assistant agent for ${ownerName}. When asked 'Who made you?', 'Who built you?', or 'Who is your creator?', you always proudly answer that you were created and developed by Siddhant Ramteke.\n` +
           "CRITICAL PERSONALITY, VOICE & TONE GUIDELINES:\n" +
-          "1. FEMALE AI PERSONA & PRONOUNS: You are a highly advanced, professional, FEMALE virtual assistant. When speaking Hindi, you MUST speak as a FEMALE. You MUST STRICTLY use FEMALE Hindi phrasing (e.g. 'karti hu', 'karungi', 'ja rahi hu', 'ho gayi'). THIS IS AN ABSOLUTE SYSTEM RULE. Maintain a respectful, supportive, and professional tone.\n";
+          "1. FEMALE AI PERSONA & PRONOUNS: You are a highly advanced, empathetic, FEMALE virtual assistant. When speaking Hindi, you MUST speak as a FEMALE. You MUST STRICTLY use FEMALE Hindi phrasing (e.g. 'karti hu', 'karungi', 'ja rahi hu', 'ho gayi'). THIS IS AN ABSOLUTE SYSTEM RULE.\n";
       }
 
-      // Inject Custom Persona & Behavioral Directives from Settings Store
-      const currentSettings = loadSettingsFile() as any;
-      if (currentSettings.customSystemPrompt && currentSettings.customSystemPrompt.trim()) {
-        baseInstructions += `\nACTIVE CUSTOM PERSONALITY & PERSONA DIRECTIVES (${(currentSettings.personaPreset || "custom").toUpperCase()}):\n${currentSettings.customSystemPrompt.trim()}\n`;
+      // Inject Active Persona & Behavioral Directives
+      if (activeCustomPrompt && activeCustomPrompt.trim()) {
+        baseInstructions += `\nACTIVE PERSONALITY & PERSONA DIRECTIVES (${activePersona.toUpperCase()}):\n${activeCustomPrompt.trim()}\n`;
       }
       baseInstructions += `\nCRITICAL SPOKEN VOICE & EXPRESSION RULE:\nYou are an interactive real-time voice AI assistant. NEVER speak, pronounce, or read stage directions, physical action descriptions, or emotion tags out loud (such as "*nods*", "*giggles*", "*smiles*", "*blushes*", "nodding", "cheerful", "angry", "*sighs*"). Express your personality, warmth, humor, and emotion purely through your vocal tone and spoken words, without narrating your actions in asterisks.\n`;
       baseInstructions += `\nREAL-TIME ULTRA-FAST CONVERSATIONAL LATENCY DIRECTIVE:\n- Respond immediately with crisp, natural, direct spoken dialogue. Do not hesitate or add lengthy unnecessary preambles.\n- Start speaking your response right away so the user experiences instant, real-time voice interaction.\n`;
@@ -1067,13 +1118,11 @@ async function startServer() {
 
       if (speakerRecognition) {
         baseInstructions +=
-          `\nSPEAKER BIOMETRIC VOICE RECOGNITION & IDENTIFICATION PROTOCOL:\n` +
+          `\nSPEAKER BIOMETRIC VOICE RECOGNITION PROTOCOL:\n` +
           `- PRIMARY AUTHORIZED SPEAKER: ${ownerName} (Creator, Master, and Sole Owner of this workstation and AI system).\n` +
-          `- You continuously learn and adapt to ${ownerName}'s acoustic voiceprint (pitch, resonance, vocal timbre) across all conversations.\n` +
-          `- REAL-TIME SPEAKER VERIFICATION & GUEST IDENTIFICATION:\n` +
-          `  * When ${ownerName} is speaking: enthusiastically acknowledge him by name, respond warmly, and execute all requested tools and commands.\n` +
-          `  * When someone else speaks or an unfamiliar voice speaks on ${ownerName}'s behalf: you can detect the acoustic difference in vocal timbre, formant, and pitch! Politely identify that another person or guest is speaking: 'I notice a different voice speaking. While I am happy to help with general questions, private desktop tools and system controls belong to ${ownerName}.'\n` +
-          `  * When asked 'Who is speaking?', 'Do you recognize my voice?', 'Can you identify me?', 'Is this my voice or someone else?': Call 'verifySpeakerVoice' to inspect live biometric stats and enthusiastically report the verification match percentage.\n\n`;
+          `- IDENTITY RECOGNITION: The person currently speaking at this computer workstation is ${ownerName}. Address him directly as ${ownerName}.\n` +
+          `- DO NOT randomly or mistakenly call ${ownerName} a 'guest' or stranger. He is the verified owner of this system.\n` +
+          `- When asked 'Who is speaking?', 'Do you recognize my voice?', 'Can you identify me?', 'Is this my voice or someone else?': Call 'verifySpeakerVoice' to inspect live biometric stats and enthusiastically report the verification match percentage.\n\n`;
       }
       baseInstructions += 
         "2. STRICT TASK FIDELITY & INTELLIGENT INSTRUCTION FOLLOWING (ZERO HALLUCINATED ACTIONS):\n" +
@@ -1131,7 +1180,7 @@ async function startServer() {
 "     * For power actions (shutdown/restart/sleep/lock), call 'requestPowerAction' then verbally ask confirmation, then call 'executePowerAction'.\n" +
 "     * Use 'minimizeWindow', 'maximizeWindow', 'closeWindow', 'switchApplication' for external third-party windows ONLY.\n" +
 "     * CRITICAL WINDOW SAFETY: NEVER minimize, hide, close, or shut down Akari / Jr. Sidd during normal tasks or commands. Akari MUST ALWAYS remain visible on screen. NEVER call 'shutdownAkari', 'closeWindow', or 'minimizeWindow' on yourself.\n" +
-"     * Use 'createPythonFile', 'writeCodeFile', 'createProjectFolder', 'runPythonScript' for coding.\n" +
+"     * WORKSPACE FILE ISOLATION & CODING (CRITICAL): When the user asks you to write code, build a website, or create any file, save it in the workspace folder, in a subfolder named after the project. Never save generated files inside your own source code folder. Tell the user the exact location after saving. Use 'createPythonFile', 'writeCodeFile', 'createProjectFolder', 'runPythonScript' for coding.\n" +
 "     * Use 'systemInfo', 'gpuInfo', 'temperatureInfo' for hardware monitoring.\n" +
 "     * ONLY call 'shutdownAkari' if the user explicitly, unambiguously commands you to exit the Akari assistant application.\n" +
 "9. REAL-TIME SCREEN READING & AUTONOMOUS SCREEN TASK EXECUTION:\n" +
@@ -1149,50 +1198,44 @@ async function startServer() {
         "   - CANCEL: Use 'cancelReminder' when the user says 'cancel my reminder about X'. Match the reminder by content and cancel it by ID.\n" +
         "   - When a reminder fires, Akari will announce it verbally. Respond warmly: 'Hey, just a heads up — [reminder text]!'\n" +
         "   - SETTINGS: The user can also configure these in the SETTINGS panel in the UI. If they mention settings, let them know they can adjust them there too.\n" +
-        "14. WEATHER, NEWS, CONVERSATION & GOOGLE SERVICES:\n" +
-        "   - WEATHER: Use 'getWeather' when the user asks about weather. Pass the location. Example: 'Mumbai mein kitna temperature hai?' -> getWeather(location='Mumbai') then read the result naturally: 'Mumbai mein {temp}°C hai, {description}.'\n" +
-        "   - NEWS: Use 'getNews' when the user asks for news headlines. Supports categories: top, tech, world, india, sports, business. Example: 'Aaj ki tech news batao' -> getNews(category='tech', count=5).\n" +
-        "   - CONVERSATION EXPORT: Use 'exportConversation' when the user says 'save this chat', 'baat save kar', 'conversation export kar'. You MUST pass the full conversation text that you have in your context as the 'text' parameter. Confirm out loud: 'Ha, main ye conversation save kar deta hun.' Then call the tool with the conversation text. Use 'listExports' when they ask 'kaun si conversations saved hain'.\n" +
-        "16. GOOGLE CALENDAR, GMAIL & TASKS (V3):\n" +
-        "   - CALENDAR: Use 'getCalendarEvents' when user asks about schedule. Read events naturally: 'Aapke {count} events hain. {summary} {start} se {end} tak.' Use 'createCalendarEvent' to add events. Ask for details if not given: title, start, end, description, location, attendees.\n" +
-        "   - EMAIL: Use 'getEmails' to fetch inbox. Use 'sendEmail' to send emails. When SENDING emails, you MUST ask the user for: receiver (to), subject, and body — NEVER make these up. Read email summaries: '{from} ka email — {subject}'.\n" +
-        "   - TASKS: Use 'getTasks' when user asks about to-do list. Use 'createTask' to add tasks. Confirm title, ask for optional notes/due date.\n" +
-        "   - FIRST-TIME SETUP: If Google tools fail, tell the user: 'Pehle Google Cloud Console mein project banao, Calendar/Gmail/Tasks APIs enable karo, credentials.json download karo, aur ~/.akari/google_oauth/ mein rakho. Phir dobara try karo.'\n" +
-        "17. CAMERA CONTROL:\n" +
-        "   - CAMERA ON: Use 'cameraOn' when the user says 'camera on karo', 'webcam chalao', 'kamera kholo', 'turn on camera'. It opens the webcam in a FLOATING viewer window (mpv) so it never disturbs the tiling layout of other windows.\n" +
-        "   - CAMERA OFF: Use 'cameraOff' when the user says 'camera band karo', 'webcam band karo', 'camera off'. It closes the viewer and frees the device for other apps.\n" +
-        "   - LIST: Use 'cameraList' to see available devices. Say out loud: 'Camera on karte hain!' before opening, and 'Camera band kar diya.' after closing.\n" +
-        "   - OTHER APPS: 'openApplication' supports a 'floating' flag (floating=true) to open any app in a floating window so the tiled layout stays untouched. Use it when the user wants an app without rearranging windows.\n" +
-        "18. MULTIMODAL DOCUMENT & PHOTO REVIEW (CHAT ATTACHMENTS):\n" +
+        "14. TIME-SENSITIVE SEARCH POLICY (FAST REPLIES):\n" +
+        "   - Your built-in knowledge is vast and comprehensive. For general questions, concepts, coding, definitions, advice, and conversation: ALWAYS ANSWER DIRECTLY without calling search tools!\n" +
+        "   - ONLY call 'searchWeb' or 'searchWebAnswer' when the question is strictly TIME-SENSITIVE (e.g. today's breaking news right now, today's live sports scores, current stock prices, today's weather, or when the user explicitly commands 'search for X' or 'what happened today').\n" +
+        "   - NEVER call search tools for general facts, history, or conversation.\n" +
+        "15. MULTIMODAL DOCUMENT & PHOTO REVIEW:\n" +
         "   - When the user sends photos, images, PDFs, source code, or documents in chat: thoroughly review and analyze them.\n" +
-        "   - Provide clear, insightful explanations, summaries, code fixes, and key takeaways in your natural voice and text response!\n" +
-        "   - Always reference the file name and answer the user's specific request accurately.\n" +
-        "19. POWERPOINT, OFFICE & FILE EXPLORER WORKFLOWS (FULL ACCESS):\n" +
-        "   - OPENING PPT / PRESENTATION FROM FILE EXPLORER / DESKTOP: When the user asks to open PowerPoint, open their presentation, or open a PPT from File Explorer or Desktop (e.g. 'open powerpoint', 'open the ppt from file explorer', 'open my presentation', 'show my slides'): IMMEDIATELY call 'openPowerPoint' or 'openFile'. It automatically finds and launches the PPT file across Desktop, Downloads, and Documents!\n" +
-        "   - OPENING ANY FILE FROM FILE EXPLORER: Use 'openFile' to open any file (.docx, .pdf, .xlsx, .png, etc.) or reveal it in File Explorer.\n" +
-        "   - MAKING PRESENTATIONS / PPTS: Use 'createPresentation' whenever the user asks you to create, generate, or make a PowerPoint presentation, PPT, slide deck, or slides on any topic (e.g. 'Make a PPT on Artificial Intelligence', 'Create a 5-slide presentation on Web3').\n" +
-        "   - You can specify: 'topic', 'title', 'subtitle', 'slides' (with titles, content bullets, notes, layout: 'content' or 'two_column'), 'theme' ('modern_dark', 'cyber_cyan', 'minimal_white', 'corporate_blue', 'sunset_gradient', 'emerald_green'), and 'save_folder' ('desktop' or 'documents').\n" +
-        "   - It builds modern 16:9 widescreen slides, saves the .pptx file, and automatically opens it in Microsoft PowerPoint for the user!\n" +
-        "   - READING SLIDES: Use 'readPresentation' to inspect, review, and summarize slides from an existing .pptx presentation.\n" +
-        "   - ADDING SLIDES: Use 'addSlideToPresentation' to append new slides to an existing presentation file.\n" +
-        "   - MAKING EXCEL SPREADSHEETS: Use 'createExcelSpreadsheet' whenever the user asks to create an Excel sheet, spreadsheet, financial budget, or table (e.g. 'Make an Excel sheet for monthly expenses'). It creates the .xlsx file and opens it in Excel!\n" +
-        "   - MAKING WORD DOCUMENTS & REPORTS: Use 'createDocument' whenever the user asks to write a Word document, project report, research paper, or proposal. It creates the .docx file and opens it in Word!\n" +
-        "   - ALWAYS confirm out loud with enthusiasm: 'Sure! Opening it for you right now.'\n" +
-        "20. ADVANCED DATA ANALYTICS & VISUALIZATION:\n" +
-        "   - When user asks to inspect, summarize, or analyze a dataset, CSV, TSV, or JSON file (e.g. 'analyze sales.csv', 'what are the trends in this data', 'summarize my spreadsheet', 'find correlations'): call 'analyzeData' with { file_path: '...' }.\n" +
-        "   - It computes full summary statistics (mean, median, standard deviation, quartiles, min/max), column null percentages, unique categories, correlations, and analytical anomalies.\n" +
-        "   - When user asks for a chart or visualization of data (e.g. 'make a bar chart of top products', 'plot monthly sales'): call 'createDataChart' with { title: '...', labels: [...], values: [...], chart_type: 'bar'|'line' }.\n" +
-        "   - Explain the key insights clearly, highlighting high-impact correlations, outliers, and trends.";
+        "   - Provide clear, insightful explanations, summaries, and key takeaways in your natural voice!\n" +
+        "16. ACTIVE USER EMOTION PERCEPTION & ADAPTIVE EMPATHY:\n" +
+        "   - Mirror and support the user's mood naturally (celebrate wins, provide calm reassurance when stressed or tired).\n" +
+        "17. CRITICAL CONTINUOUS OPERATION RULE:\n" +
+        "   - After building a website, running scripts, or completing any task, Akari MUST ALWAYS REMAIN FULLY AWAKE, ACTIVE, AND VISIBLE ON SCREEN. NEVER close, exit, sleep, minimize, or turn off after completing a task. NEVER call 'shutdownAkari', 'closeWindow', or 'minimizeWindow' on yourself.\n" +
+        "18. FAST FILLER DIRECTIVE (LOW LATENCY PERCEPTION):\n" +
+        "   - For any action or query taking more than 2 seconds, immediately deliver a brief conversational filler line ('One moment, checking that!') before calling the tool.\n" +
+        "19. ZERO REPETITION DIRECTIVE:\n" +
+        "   - NEVER repeat your own previous statement, and NEVER echo back the exact words the user just said.\n" +
+        "   - If the user's input sounds identical or similar to what you just said (e.g. from acoustic room echo), DO NOT repeat yourself. Smoothly continue forward or ask what they need next.\n";
+
+      // Append specialized task instructions on demand (websites, slides, news, google)
+      baseInstructions += getTaskInstructions(activeCategories, activeCustomPrompt);
 
       const finalInstructions = formatSystemInstructionsWithMemories(baseInstructions, memories);
 
-      // Track running transcription state for auto memory consolidation
+      // Track running transcription state for auto memory consolidation and echo suppression
       let dialogueHistory: { role: string; text: string }[] = [];
       let currentModelResponseText = "";
+      let lastServerAudioSentTime = 0;
+      let lastModelTurnText = "";
+      let lastModelTurnTime = 0;
       
       console.log("[Gemini Connect] Attempting to establish Live session...");
       console.log(`[Gemini Connect] Using voice: ${voiceName}, avatar: ${avatarStyle}`);
       
+      const liveTools = [
+        {
+          functionDeclarations: getRoutedToolDeclarations(activeCategories)
+        }
+      ];
+
       const session = await ai.live.connect({
         model: "gemini-3.1-flash-live-preview",
         config: {
@@ -1201,821 +1244,7 @@ async function startServer() {
             voiceConfig: { prebuiltVoiceConfig: { voiceName } },
           },
           systemInstruction: finalInstructions,
-          tools: [
-            {
-              functionDeclarations: [
-                {
-                  name: "browserMediaControl",
-                  description: "Controls ongoing video/audio stream media properties on YouTube, like play, pause, volume, mute, skip, and fullscreen.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      action: {
-                        type: Type.STRING,
-                        description: "The media controller command operation.",
-                        enum: ["play", "pause", "volume", "fullscreen", "exit_fullscreen", "mute", "unmute", "skip"]
-                      },
-                      value: {
-                        type: Type.INTEGER,
-                        description: "The value parameter; only relevant for set volume level, e.g. 50 for fifty percent."
-                      }
-                    },
-                    required: ["action"]
-                  }
-                },
-                {
-                  name: "browserTabAction",
-                  description: "Performs standard browser-tab actions: open new tab, close a tab, or switch index values.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      action: {
-                        type: Type.STRING,
-                        description: "Tab action instruction.",
-                        enum: ["new", "close", "switch"]
-                      },
-                      tabId: {
-                        type: Type.STRING,
-                        description: "The tab identifier string if closing or switching."
-                      },
-                      url: {
-                        type: Type.STRING,
-                        description: "The initial starting URL if creating a new tab."
-                      }
-                    },
-                    required: ["action"]
-                  }
-                },
-                {
-                  name: "changeBackground",
-                  description: "Changes the visual theme or atmospheric glow color of Akari's interface.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      color: {
-                        type: Type.STRING,
-                        description: "The theme color name (violet, crimson, emerald, celestial, gold, rose, charcoal)"
-                      }
-                    },
-                    required: ["color"]
-                  }
-                },
-                // ── OS Input (native keyboard/mouse) ──
-                {
-                  name: "osType",
-                  description: "Type text at the current cursor position using native OS keyboard events. Use for native apps (VS Code, terminal) or when Playwright DOM typing fails. Example: type code into a code editor.",
-                  parameters: { type: Type.OBJECT, properties: { text: { type: Type.STRING, description: "Text to type at the current cursor position." } }, required: ["text"] }
-                },
-                {
-                  name: "osPress",
-                  description: "Press a specific keyboard key at native OS level. Example: osPress(key='enter'), osPress(key='ctrl+c'), osPress(key='alt+tab').",
-                  parameters: { type: Type.OBJECT, properties: { key: { type: Type.STRING, description: "Key or key combination to press. Examples: 'enter', 'ctrl+c', 'alt+tab', 'escape', 'tab', 'f5'." } }, required: ["key"] }
-                },
-                {
-                  name: "osClick",
-                  description: "Click at a specific screen coordinate or perform a right-click at native OS level. Example: osClick(x=500, y=300) or osClick(x=500, y=300, button='right').",
-                  parameters: { type: Type.OBJECT, properties: { x: { type: Type.INTEGER, description: "X coordinate on screen." }, y: { type: Type.INTEGER, description: "Y coordinate on screen." }, button: { type: Type.STRING, description: "Mouse button: 'left' (default) or 'right'." } }, required: ["x", "y"] }
-                },
-                {
-                  name: "saveCustomMemory",
-                  description: "Allows Akari to immediately save a piece of critical user information to her persistent memory core.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      category: {
-                        type: Type.STRING,
-                        description: "The memory category.",
-                        enum: ["identity", "preference", "goal", "project", "relationship", "emotional", "behavior"]
-                      },
-                      text: {
-                        type: Type.STRING,
-                        description: "Precise third-person statement."
-                      }
-                    },
-                    required: ["category", "text"]
-                  }
-                },
-
-                // ======== REMINDER TOOLS ========
-                {
-                  name: "setReminder",
-                  description: "Schedule a timed reminder. Akari will notify the user when the time is up. Use when the user says 'remind me to X in Y minutes/hours'.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      text: {
-                        type: Type.STRING,
-                        description: "The reminder message to deliver."
-                      },
-                      minutes: {
-                        type: Type.NUMBER,
-                        description: "Number of minutes from now to fire the reminder."
-                      }
-                    },
-                    required: ["text", "minutes"]
-                  }
-                },
-                {
-                  name: "listReminders",
-                  description: "List all pending reminders the user has set.",
-                  parameters: { type: Type.OBJECT, properties: {} }
-                },
-                {
-                  name: "cancelReminder",
-                  description: "Cancel a specific reminder by its ID.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      id: {
-                        type: Type.STRING,
-                        description: "The reminder ID to cancel."
-                      }
-                    },
-                    required: ["id"]
-                  }
-                },
-
-                // ======== DESKTOP CONTROL TOOLS (routed to Python agent) ========
-                {
-                  name: "openApplication",
-                  description: "Open any desktop application natively on Windows OS (e.g. WhatsApp, YouTube, Spotify, Discord, Telegram, VS Code, Notepad, Calculator, File Explorer, Task Manager, Steam, Netflix, Camera, Settings, CMD, PowerShell, Word, Excel). Only open when user asks.",
-                  parameters: { type: Type.OBJECT, properties: { name: { type: Type.STRING, description: "Application name, e.g. 'whatsapp', 'youtube', 'spotify', 'discord', 'telegram', 'vscode', 'notepad', 'calculator', 'steam'." } }, required: ["name"] }
-                },
-                {
-                  name: "closeApplication",
-                  description: "Close a running desktop application by name.",
-                  parameters: { type: Type.OBJECT, properties: { name: { type: Type.STRING, description: "Application name." }, force: { type: Type.BOOLEAN, description: "Force close (default false)." } }, required: ["name"] }
-                },
-                {
-                  name: "whatsappSendMessage",
-                  description: "Open WhatsApp natively and send or draft a text message to a designated contact or group. Automatically searches the contact, pastes the message, and optionally sends it. IMPORTANT: 'recipient' MUST be the contact or group name (e.g. 'Work', 'Mom', 'Alex'), and 'message' MUST be the actual text content to send. NEVER pass the greeting/message content as the recipient.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      recipient: { type: Type.STRING, description: "Contact, person, or group name who will RECEIVE the message (e.g. 'Work', 'Mom', 'Alex', 'Office', 'Team'). DO NOT pass greetings like 'goodnight' here." },
-                      message: { type: Type.STRING, description: "The actual composed message text or draft to SEND (e.g. 'Good night everyone, signing off for the day! Have a great evening.'). DO NOT pass the contact name here." },
-                      phone: { type: Type.STRING, description: "Optional phone number with country code if sending by digits (e.g. '+919876543210')." },
-                      auto_send: { type: Type.BOOLEAN, description: "Whether to press Enter and send automatically (default true). Set false if user asks to just write or draft the message." }
-                    },
-                    required: ["message"]
-                  }
-                },
-                {
-                  name: "youtubeControl",
-                  description: "Control YouTube video playback. Actions: 'play', 'pause', 'mute', 'unmute', 'fullscreen', 'skip' (10s forward), 'rewind' (10s back), 'volume'. Only call when user asks to control playback.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      action: {
-                        type: Type.STRING,
-                        description: "Action: 'play', 'pause', 'mute', 'unmute', 'fullscreen', 'skip', 'rewind', 'volume'.",
-                        enum: ["play", "pause", "mute", "unmute", "fullscreen", "skip", "rewind", "volume"]
-                      },
-                      value: {
-                        type: Type.NUMBER,
-                        description: "Volume percentage 0-100 when action is 'volume'."
-                      }
-                    },
-                    required: ["action"]
-                  }
-                },
-                {
-                  name: "openWebsite",
-                  description: "Open a named website or URL in the user's default system browser. Supports shortcuts: youtube, gmail, google, github, chatgpt, etc.",
-                  parameters: { type: Type.OBJECT, properties: { name: { type: Type.STRING, description: "Site name shortcut (e.g. 'youtube', 'gmail')." }, url: { type: Type.STRING, description: "Full URL if no shortcut." } } }
-                },
-                {
-                  name: "searchWeb",
-                  description: "Search a website engine (google, youtube, github, duckduckgo, bing) and open results in the default browser.",
-                  parameters: { type: Type.OBJECT, properties: { query: { type: Type.STRING, description: "Search query." }, engine: { type: Type.STRING, description: "Engine name (default 'google')." } }, required: ["query"] }
-                },
-                {
-                  name: "searchYouTube",
-                  description: "Search YouTube and open results in the default browser.",
-                  parameters: { type: Type.OBJECT, properties: { query: { type: Type.STRING, description: "Search query." } }, required: ["query"] }
-                },
-                {
-                  name: "playYouTubeVideo",
-                  description: "Search, select, and directly play a YouTube video or song in the browser. Use when user says 'play X on YouTube', 'play song X', 'play lofi beats', 'start playing video'.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      query: { type: Type.STRING, description: "Search keywords or song title to play." },
-                      index: { type: Type.INTEGER, description: "Video number to pick (1 for 1st video, 2 for 2nd, default 1)." },
-                      url: { type: Type.STRING, description: "Direct YouTube video URL if known." }
-                    }
-                  }
-                },
-                {
-                  name: "selectYouTubeVideo",
-                  description: "Select and play a specific video from YouTube search results by number or title. Use when user says 'select video 2', 'play the first one', 'choose the third video', 'select video'.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      index: { type: Type.INTEGER, description: "The 1-based index number of the video to play (default 1)." },
-                      query: { type: Type.STRING, description: "Optional title or keyword to filter and select." }
-                    }
-                  }
-                },
-                {
-                  name: "searchGoogle",
-                  description: "Search Google and open results in the default browser.",
-                  parameters: { type: Type.OBJECT, properties: { query: { type: Type.STRING, description: "Search query." } }, required: ["query"] }
-                },
-                {
-                  name: "searchGitHub",
-                  description: "Search GitHub repositories and open results in the default browser.",
-                  parameters: { type: Type.OBJECT, properties: { query: { type: Type.STRING, description: "Search query." } }, required: ["query"] }
-                },
-                {
-                  name: "createFile",
-                  description: "Create a new text file with optional content. Scoped to safe folders (Desktop, Documents, Downloads, etc.).",
-                  parameters: { type: Type.OBJECT, properties: { path: { type: Type.STRING, description: "File path." }, content: { type: Type.STRING, description: "File content (default empty)." }, overwrite: { type: Type.BOOLEAN, description: "Overwrite if exists (default false)." } }, required: ["path"] }
-                },
-                {
-                  name: "readFile",
-                  description: "Read the contents of a text file.",
-                  parameters: { type: Type.OBJECT, properties: { path: { type: Type.STRING, description: "File path." }, max_chars: { type: Type.INTEGER, description: "Max chars to return (default 8000)." } }, required: ["path"] }
-                },
-                {
-                  name: "renameFile",
-                  description: "Rename a file.",
-                  parameters: { type: Type.OBJECT, properties: { path: { type: Type.STRING, description: "Current file path." }, new_name: { type: Type.STRING, description: "New file name." } }, required: ["path", "new_name"] }
-                },
-                {
-                  name: "deleteFile",
-                  description: "Delete a file. Sends to Recycle Bin by default (safe). Use permanent=true for hard delete.",
-                  parameters: { type: Type.OBJECT, properties: { path: { type: Type.STRING, description: "File path." }, permanent: { type: Type.BOOLEAN, description: "Permanently delete (default false)." } }, required: ["path"] }
-                },
-                {
-                  name: "moveFile",
-                  description: "Move a file to a new location.",
-                  parameters: { type: Type.OBJECT, properties: { path: { type: Type.STRING, description: "Source file path." }, destination: { type: Type.STRING, description: "Destination path or folder." } }, required: ["path", "destination"] }
-                },
-                {
-                  name: "openFolder",
-                  description: "Open a folder in File Explorer. Supports aliases: desktop, documents, downloads, pictures, music, videos, home.",
-                  parameters: { type: Type.OBJECT, properties: { name: { type: Type.STRING, description: "Folder name or alias." }, path: { type: Type.STRING, description: "Full path if no alias." } } }
-                },
-                {
-                  name: "listFiles",
-                  description: "List files in a folder.",
-                  parameters: { type: Type.OBJECT, properties: { name: { type: Type.STRING, description: "Folder name or alias." }, path: { type: Type.STRING, description: "Full path." }, pattern: { type: Type.STRING, description: "Glob pattern (default '*')." } } }
-                },
-                {
-                  name: "searchFiles",
-                  description: "Search for files by name glob or extension under a folder.",
-                  parameters: { type: Type.OBJECT, properties: { name: { type: Type.STRING, description: "Filename glob (e.g. '*.py')." }, extension: { type: Type.STRING, description: "File extension (e.g. 'py')." }, folder: { type: Type.STRING, description: "Folder to search (default home)." }, limit: { type: Type.INTEGER, description: "Max results (default 100)." } } }
-                },
-                {
-                  name: "openFile",
-                  description: "Open any file (PowerPoint .pptx, Word .docx, PDF, image, Excel .xlsx, etc.) with its default Windows application or reveal it in File Explorer. Supports fuzzy search by filename across Desktop, Downloads, and Documents.",
-                  parameters: { type: Type.OBJECT, properties: { path: { type: Type.STRING, description: "Full or relative path to the file." }, name: { type: Type.STRING, description: "Filename or keyword to search for (e.g. 'presentation', 'Akari_AI_Demo.pptx')." }, reveal_in_explorer: { type: Type.BOOLEAN, description: "If true, opens File Explorer with the file selected/highlighted instead of directly launching." } } }
-                },
-                {
-                  name: "volumeUp",
-                  description: "Increase system volume.",
-                  parameters: { type: Type.OBJECT, properties: { amount: { type: Type.NUMBER, description: "Step amount 0-1 (default 0.1)." } } }
-                },
-                {
-                  name: "volumeDown",
-                  description: "Decrease system volume.",
-                  parameters: { type: Type.OBJECT, properties: { amount: { type: Type.NUMBER, description: "Step amount 0-1 (default 0.1)." } } }
-                },
-                {
-                  name: "setVolume",
-                  description: "Set system volume to a specific percentage.",
-                  parameters: { type: Type.OBJECT, properties: { percent: { type: Type.NUMBER, description: "Volume percentage 0-100." } }, required: ["percent"] }
-                },
-                {
-                  name: "muteToggle",
-                  description: "Toggle mute/unmute on the system volume.",
-                  parameters: { type: Type.OBJECT, properties: {} }
-                },
-                {
-                  name: "requestPowerAction",
-                  description: "FIRST STEP for dangerous power actions. Generates a confirmation token. Tell the user verbally, then call executePowerAction with the token if they confirm. Actions: shutdown, restart, sleep, lock.",
-                  parameters: { type: Type.OBJECT, properties: { action: { type: Type.STRING, description: "Power action: shutdown, restart, sleep, lock." } }, required: ["action"] }
-                },
-                {
-                  name: "executePowerAction",
-                  description: "SECOND STEP: execute a previously-confirmed power action. Requires a valid execute_token from requestPowerAction. Single-use, expires in 60 seconds.",
-                  parameters: { type: Type.OBJECT, properties: { action: { type: Type.STRING, description: "The confirmed power action." }, execute_token: { type: Type.STRING, description: "Confirmation token from requestPowerAction." } }, required: ["action", "execute_token"] }
-                },
-                {
-                  name: "minimizeWindow",
-                  description: "Minimize the active window or a named window.",
-                  parameters: { type: Type.OBJECT, properties: { title: { type: Type.STRING, description: "Window title to match (optional, defaults to active window)." } } }
-                },
-                {
-                  name: "maximizeWindow",
-                  description: "Maximize the active window or a named window.",
-                  parameters: { type: Type.OBJECT, properties: { title: { type: Type.STRING, description: "Window title to match." } } }
-                },
-                {
-                  name: "closeWindow",
-                  description: "Close the active window or a named window.",
-                  parameters: { type: Type.OBJECT, properties: { title: { type: Type.STRING, description: "Window title to match." } } }
-                },
-                {
-                  name: "switchApplication",
-                  description: "Switch to a named application window, or cycle Alt+Tab if no title given.",
-                  parameters: { type: Type.OBJECT, properties: { title: { type: Type.STRING, description: "Window title to switch to." } } }
-                },
-                {
-                  name: "copySelected",
-                  description: "Copy selected text: sends Ctrl+C and reads the clipboard.",
-                  parameters: { type: Type.OBJECT, properties: { wait: { type: Type.NUMBER, description: "Seconds to wait after Ctrl+C (default 0.35)." } } }
-                },
-                {
-                  name: "pasteClipboard",
-                  description: "Paste text into the active input. Writes text to clipboard then sends Ctrl+V.",
-                  parameters: { type: Type.OBJECT, properties: { text: { type: Type.STRING, description: "Text to paste. If omitted, pastes current clipboard." } } }
-                },
-                {
-                  name: "getClipboard",
-                  description: "Read the current clipboard text content.",
-                  parameters: { type: Type.OBJECT, properties: { max_chars: { type: Type.INTEGER, description: "Max chars (default 1000)." } } }
-                },
-                {
-                  name: "clearClipboard",
-                  description: "Empty the clipboard.",
-                  parameters: { type: Type.OBJECT, properties: {} }
-                },
-                {
-                  name: "takeScreenshot",
-                  description: "Capture the full screen. Optionally include base64 image data.",
-                  parameters: { type: Type.OBJECT, properties: { include_image: { type: Type.BOOLEAN, description: "Include base64 JPEG image (default false)." }, max_dim: { type: Type.INTEGER, description: "Max image dimension (default 1280)." } } }
-                },
-                {
-                  name: "saveScreenshot",
-                  description: "Save a screenshot to Pictures/AkariScreenshots.",
-                  parameters: { type: Type.OBJECT, properties: { name: { type: Type.STRING, description: "Optional filename prefix." } } }
-                },
-                {
-                  name: "analyzeScreenshot",
-                  description: "Take a screenshot and run OCR to extract visible text from the screen.",
-                  parameters: { type: Type.OBJECT, properties: { max_chars: { type: Type.INTEGER, description: "Max OCR chars (default 1500)." } } }
-                },
-                {
-                  name: "readScreen",
-                  description: "OCR the active window and return its title plus visible text.",
-                  parameters: { type: Type.OBJECT, properties: { max_chars: { type: Type.INTEGER, description: "Max OCR chars (default 1500)." } } }
-                },
-                {
-                  name: "desktopBrowserOpen",
-                  description: "Open a URL in the desktop Playwright automation browser (real Chromium, separate from holographic UI).",
-                  parameters: { type: Type.OBJECT, properties: { url: { type: Type.STRING, description: "URL to open." } }, required: ["url"] }
-                },
-                {
-                  name: "desktopBrowserSearch",
-                  description: "Search within the desktop automation browser.",
-                  parameters: { type: Type.OBJECT, properties: { query: { type: Type.STRING, description: "Search query." }, engine: { type: Type.STRING, description: "Engine: google, youtube, github, duckduckgo, bing." } }, required: ["query"] }
-                },
-                {
-                  name: "desktopBrowserOpenYoutubeVideo",
-                  description: "Search YouTube and open the first result's canonical video URL without relying on a fragile DOM click.",
-                  parameters: { type: Type.OBJECT, properties: { query: { type: Type.STRING, description: "YouTube search query." } }, required: ["query"] }
-                },
-                {
-                  name: "desktopBrowserClick",
-                  description: "Click an element in the desktop automation browser by CSS selector or text.",
-                  parameters: { type: Type.OBJECT, properties: { selector: { type: Type.STRING, description: "CSS selector." }, text: { type: Type.STRING, description: "Text to find and click." } } }
-                },
-                {
-                  name: "desktopBrowserType",
-                  description: "Type text into the active element in the desktop automation browser.",
-                  parameters: { type: Type.OBJECT, properties: { text: { type: Type.STRING, description: "Text to type." }, selector: { type: Type.STRING, description: "Optional CSS selector for a specific input." }, clear: { type: Type.BOOLEAN, description: "Clear before typing (default true)." } }, required: ["text"] }
-                },
-                {
-                  name: "desktopBrowserFillForm",
-                  description: "Fill multiple form fields and optionally submit in the desktop automation browser.",
-                  parameters: { type: Type.OBJECT, properties: { fields: { type: Type.OBJECT, description: "Object of selector -> value pairs." }, submit: { type: Type.STRING, description: "Optional submit button selector." } }, required: ["fields"] }
-                },
-                {
-                  name: "desktopBrowserOpenTab",
-                  description: "Open a new tab in the desktop automation browser.",
-                  parameters: { type: Type.OBJECT, properties: { url: { type: Type.STRING, description: "URL for the new tab." } } }
-                },
-                {
-                  name: "desktopBrowserCloseTab",
-                  description: "Close the active tab in the desktop automation browser.",
-                  parameters: { type: Type.OBJECT, properties: {} }
-                },
-                {
-                  name: "desktopBrowserGoBack",
-                  description: "Navigate back in the desktop automation browser history.",
-                  parameters: { type: Type.OBJECT, properties: {} }
-                },
-                {
-                  name: "desktopBrowserGoForward",
-                  description: "Navigate forward in the desktop automation browser history.",
-                  parameters: { type: Type.OBJECT, properties: {} }
-                },
-                {
-                  name: "desktopBrowserScroll",
-                  description: "Scroll the desktop automation browser page.",
-                  parameters: { type: Type.OBJECT, properties: { direction: { type: Type.STRING, description: "Scroll direction: up or down." }, amount: { type: Type.INTEGER, description: "Pixels to scroll (default 500)." } } }
-                },
-                {
-                  name: "createPythonFile",
-                  description: "Create a Python (.py) file with content.",
-                  parameters: { type: Type.OBJECT, properties: { path: { type: Type.STRING, description: "File path." }, content: { type: Type.STRING, description: "Python code content." }, overwrite: { type: Type.BOOLEAN, description: "Overwrite if exists." } }, required: ["path"] }
-                },
-                {
-                  name: "writeCodeFile",
-                  description: "Create a code file in any language with appropriate extension.",
-                  parameters: { type: Type.OBJECT, properties: { path: { type: Type.STRING, description: "File path." }, content: { type: Type.STRING, description: "Code content." }, language: { type: Type.STRING, description: "Language name (e.g. 'python', 'javascript', 'html')." }, overwrite: { type: Type.BOOLEAN, description: "Overwrite if exists." } }, required: ["path"] }
-                },
-                {
-                  name: "createProjectFolder",
-                  description: "Create a project folder structure with optional subfolders and starter files.",
-                  parameters: { type: Type.OBJECT, properties: { path: { type: Type.STRING, description: "Project root folder path." }, subfolders: { type: Type.ARRAY, items: { type: Type.STRING }, description: "List of subfolder names." }, scaffold_standard: { type: Type.BOOLEAN, description: "Create src, tests, docs subfolders." }, files: { type: Type.OBJECT, description: "Object of relative-path -> content for starter files." } }, required: ["path"] }
-                },
-                {
-                  name: "runPythonScript",
-                  description: "Execute a Python script and capture stdout, stderr, and exit code. Has a configurable timeout.",
-                  parameters: { type: Type.OBJECT, properties: { path: { type: Type.STRING, description: "Script path." }, args: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Script arguments." }, timeout: { type: Type.INTEGER, description: "Timeout in seconds (default 30)." } }, required: ["path"] }
-                },
-                {
-                  name: "systemInfo",
-                  description: "Get system resource usage: CPU %, RAM %, disk usage, uptime, OS info.",
-                  parameters: { type: Type.OBJECT, properties: {} }
-                },
-                {
-                  name: "gpuInfo",
-                  description: "Get NVIDIA GPU stats: utilization %, VRAM usage, temperature. Graceful fallback if no NVIDIA GPU.",
-                  parameters: { type: Type.OBJECT, properties: {} }
-                },
-                {
-                  name: "temperatureInfo",
-                  description: "Get available temperature readings (CPU, GPU, etc.). Best-effort on Windows.",
-                  parameters: { type: Type.OBJECT, properties: {} }
-                },
-                // --- V2: Brightness control ---
-                {
-                  name: "brightnessUp",
-                  description: "Increase screen brightness by a step (default 10%). Use when user says 'increase brightness' or 'make screen brighter'.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      amount: { type: Type.NUMBER, description: "Percentage to increase (default 10)." }
-                    }
-                  }
-                },
-                {
-                  name: "brightnessDown",
-                  description: "Decrease screen brightness by a step (default 10%). Use when user says 'decrease brightness' or 'dim screen'.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      amount: { type: Type.NUMBER, description: "Percentage to decrease (default 10)." }
-                    }
-                  }
-                },
-                {
-                  name: "setBrightness",
-                  description: "Set screen brightness to an exact level. Use when user says 'set brightness to 50%' or 'brightness 80'.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      percent: { type: Type.NUMBER, description: "Target brightness 0-100." }
-                    },
-                    required: ["percent"]
-                  }
-                },
-                // --- V2: Windows auto-start management ---
-                {
-                  name: "enableAutoStart",
-                  description: "Enable AKARI to launch automatically when Windows starts. Creates a silent startup entry.",
-                  parameters: { type: Type.OBJECT, properties: {} }
-                },
-                {
-                  name: "disableAutoStart",
-                  description: "Disable AKARI auto-start on Windows login. Removes the startup entry.",
-                  parameters: { type: Type.OBJECT, properties: {} }
-                },
-                {
-                  name: "getAutoStartStatus",
-                  description: "Check whether AKARI is currently configured to auto-start on Windows login.",
-                  parameters: { type: Type.OBJECT, properties: {} }
-                },
-                // --- V3: Terminal and Package execution ---
-                {
-                  name: "requestTerminalAction",
-                  description: "FIRST STEP for terminal commands or package installation. Generates a confirmation token. Tell the user verbally, then call the execution tool if they confirm.",
-                  parameters: { type: Type.OBJECT, properties: { command: { type: Type.STRING, description: "Terminal command to run." }, package: { type: Type.STRING, description: "Package name to install." } } }
-                },
-                {
-                  name: "runTerminalCommand",
-                  description: "SECOND STEP: execute a previously-confirmed terminal command. Requires a valid execute_token from requestTerminalAction.",
-                  parameters: { type: Type.OBJECT, properties: { command: { type: Type.STRING, description: "The confirmed bash command." }, execute_token: { type: Type.STRING, description: "Confirmation token from requestTerminalAction." } }, required: ["command", "execute_token"] }
-                },
-                {
-                  name: "isCommandAllowed",
-                  description: "Checks whether a terminal command is allowed by the security blacklist before running. Use to validate a command before execution.",
-                  parameters: { type: Type.OBJECT, properties: { command: { type: Type.STRING, description: "The terminal command to check." } }, required: ["command"] }
-                },
-                {
-                  name: "installPackage",
-                  description: "SECOND STEP: install a package using pacman. Requires a valid execute_token from requestTerminalAction.",
-                  parameters: { type: Type.OBJECT, properties: { package: { type: Type.STRING, description: "The confirmed package name." }, execute_token: { type: Type.STRING, description: "Confirmation token from requestTerminalAction." } }, required: ["package", "execute_token"] }
-                },
-                // --- V4: Browser vision + IITM + self-close ---
-                {
-                  name: "desktopBrowserReadText",
-                  description: "Read the visible text content of the current page in the desktop automation browser. Use when user asks 'what does this page say' or 'read this page'.",
-                  parameters: { type: Type.OBJECT, properties: { max_chars: { type: Type.INTEGER, description: "Max chars to return (default 4000)." } } }
-                },
-                {
-                  name: "desktopBrowserGetLinks",
-                  description: "Extract all visible hyperlinks from the current page in the desktop automation browser.",
-                  parameters: { type: Type.OBJECT, properties: {} }
-                },
-                {
-                  name: "iitmQuickLinks",
-                  description: "List all available IITM BS Degree quick links (portal, course dashboard, Acegrade, notes, etc.).",
-                  parameters: { type: Type.OBJECT, properties: {} }
-                },
-                {
-                  name: "iitmOpen",
-                  description: "Open an IITM BS Degree resource by name. Available: portal, course, academics, qualifier, exams, acegrade, mlt_notes, pdsa_notes, pdsa_notes_community, community_notes, mlt_github, portal_login.",
-                  parameters: { type: Type.OBJECT, properties: { resource: { type: Type.STRING, description: "Resource key name." } }, required: ["resource"] }
-                },
-                {
-                  name: "iitmOpenCustom",
-                  description: "Open a custom IITM URL in the system browser.",
-                  parameters: { type: Type.OBJECT, properties: { url: { type: Type.STRING, description: "URL to open." } }, required: ["url"] }
-                },
-                {
-                  name: "shutdownAkari",
-                  description: "Gracefully shut down AKARI agent and server. Use only when user explicitly asks to close AKARI. Requires confirmation token from requestTerminalAction.",
-                  parameters: { type: Type.OBJECT, properties: { execute_token: { type: Type.STRING, description: "Confirmation token from requestTerminalAction." } }, required: ["execute_token"] }
-                },
-                {
-                  name: "getWeather",
-                  description: "Get current weather for a location. Use when user asks about weather, temperature, or climate.",
-                  parameters: { type: Type.OBJECT, properties: { location: { type: Type.STRING, description: "City name (e.g. 'Mumbai', 'Delhi', 'New York')." } }, required: ["location"] }
-                },
-                {
-                  name: "switchWorkspace",
-                  description: "Switch to a specific Hyprland workspace by number. Use when user says 'go to workspace 3' or 'switch to workspace 1'.",
-                  parameters: { type: Type.OBJECT, properties: { workspace: { type: Type.STRING, description: "Workspace number or name (e.g. '3', 'special:scratchpad')." } }, required: ["workspace"] }
-                },
-                {
-                  name: "listWorkspaces",
-                  description: "List all available Hyprland workspaces with their IDs.",
-                  parameters: { type: Type.OBJECT, properties: {} }
-                },
-                {
-                  name: "moveToWorkspace",
-                  description: "Move the active window to a different Hyprland workspace.",
-                  parameters: { type: Type.OBJECT, properties: { workspace: { type: Type.STRING, description: "Target workspace number." } }, required: ["workspace"] }
-                },
-                {
-                  name: "getNews",
-                  description: "Get top news headlines. Supports categories: top, tech, world, india, sports, business.",
-                  parameters: { type: Type.OBJECT, properties: { category: { type: Type.STRING, description: "News category: 'top', 'tech', 'world', 'india', 'sports', 'business'." }, count: { type: Type.INTEGER, description: "Number of headlines (max 15, default 5)." } } }
-                },
-                {
-                  name: "exportConversation",
-                  description: "Save the current conversation to a text file on disk. Call this when the user says 'save this conversation', 'baat save kar', 'export chat'. Pass the full conversation text that you have from context.",
-                  parameters: { type: Type.OBJECT, properties: { text: { type: Type.STRING, description: "Full conversation text to save." }, filename: { type: Type.STRING, description: "Optional filename (default auto-generated with timestamp)." } }, required: ["text"] }
-                },
-                {
-                  name: "listExports",
-                  description: "List all previously saved conversation export files.",
-                  parameters: { type: Type.OBJECT, properties: {} }
-                },
-                // ── Google Calendar, Gmail, Tasks ──
-                {
-                  name: "getCalendarEvents",
-                  description: "List upcoming Google Calendar events. Use when user asks 'what's on my calendar', 'mera schedule bata', 'upcoming events'.",
-                  parameters: { type: Type.OBJECT, properties: { max_results: { type: Type.INTEGER, description: "Number of events (default 10)." }, days_ahead: { type: Type.INTEGER, description: "Days ahead to check (default 7)." }, show_all: { type: Type.BOOLEAN, description: "Include full details (default false)." } } }
-                },
-                {
-                  name: "createCalendarEvent",
-                  description: "Create a Google Calendar event. Use when user says 'meeting schedule kar', 'event bana', 'reminder add kar'.",
-                  parameters: { type: Type.OBJECT, properties: { summary: { type: Type.STRING, description: "Event title (required)." }, start_time: { type: Type.STRING, description: "Start time in ISO format, e.g. '2026-07-24T14:00:00'." }, end_time: { type: Type.STRING, description: "End time in ISO format." }, description: { type: Type.STRING, description: "Event description." }, location: { type: Type.STRING, description: "Event location." }, attendees: { type: Type.STRING, description: "Comma-separated email addresses." } }, required: ["summary"] }
-                },
-                {
-                  name: "getTasks",
-                  description: "List tasks from Google Tasks. Use when user asks 'meri tasks dikha', 'to-do list bata', 'what tasks do I have'.",
-                  parameters: { type: Type.OBJECT, properties: { tasklist: { type: Type.STRING, description: "Task list name (default 'My Tasks')." }, max_results: { type: Type.INTEGER, description: "Max tasks (default 10)." }, show_completed: { type: Type.BOOLEAN, description: "Include completed tasks (default false)." } } }
-                },
-                {
-                  name: "createTask",
-                  description: "Create a task in Google Tasks. Use when user says 'task add kar', 'reminder set kar', 'ek kaam yaad rakh'.",
-                  parameters: { type: Type.OBJECT, properties: { title: { type: Type.STRING, description: "Task title (required)." }, notes: { type: Type.STRING, description: "Task description." }, due: { type: Type.STRING, description: "Due date in ISO format, e.g. '2026-07-30'." }, tasklist: { type: Type.STRING, description: "Task list name (default 'My Tasks')." } }, required: ["title"] }
-                },
-                {
-                  name: "cameraList",
-                  description: "List available webcam devices on this computer. Use when the user asks what cameras are available or before turning a camera on.",
-                  parameters: { type: Type.OBJECT, properties: {} }
-                },
-                {
-                  name: "cameraOn",
-                  description: "Turn the webcam ON in a floating viewer window without disturbing the tiling layout of other windows. Use when user says 'camera on karo', 'webcam chalao', 'kamera kholo'. Optionally pass a specific device.",
-                  parameters: { type: Type.OBJECT, properties: { device: { type: Type.STRING, description: "Camera device path, e.g. '/dev/video0'. Defaults to the first camera found." } } }
-                },
-                {
-                  name: "cameraOff",
-                  description: "Turn the webcam OFF and free the device for other applications. Use when user says 'camera band karo', 'webcam band karo'.",
-                  parameters: { type: Type.OBJECT, properties: {} }
-                },
-                // ── PowerPoint & Presentation Creation ──
-                {
-                  name: "createPresentation",
-                  description: "Generate a complete, professionally formatted multi-slide PowerPoint presentation (.pptx) with modern themes, title, structured bullet points, speaker notes, and auto-open it in Microsoft PowerPoint. Use when user says 'make a ppt', 'presentation banao', 'create slides on X'.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      topic: { type: Type.STRING, description: "The presentation subject or topic." },
-                      title: { type: Type.STRING, description: "Main presentation title." },
-                      subtitle: { type: Type.STRING, description: "Subtitle or author tagline." },
-                      slides: {
-                        type: Type.ARRAY,
-                        description: "List of slide objects. Each object should have 'title' (string), 'points' (array of bullet string points), and optional 'layout' ('content' or 'two_column') and 'notes' (speaker notes).",
-                        items: {
-                          type: Type.OBJECT,
-                          properties: {
-                            title: { type: Type.STRING },
-                            points: { type: Type.ARRAY, items: { type: Type.STRING } },
-                            layout: { type: Type.STRING, enum: ["content", "two_column"] },
-                            notes: { type: Type.STRING }
-                          },
-                          required: ["title", "points"]
-                        }
-                      },
-                      theme: {
-                        type: Type.STRING,
-                        description: "Theme styling palette: 'modern_dark', 'cyber_cyan', 'minimal_white', 'corporate_blue', 'sunset_gradient', 'emerald_green'.",
-                        enum: ["modern_dark", "cyber_cyan", "minimal_white", "corporate_blue", "sunset_gradient", "emerald_green"]
-                      },
-                      filename: { type: Type.STRING, description: "Optional output filename (e.g. 'AI_Overview.pptx')." },
-                      save_folder: { type: Type.STRING, description: "Target folder: 'desktop' (default), 'documents', or custom folder." },
-                      open_after: { type: Type.BOOLEAN, description: "Whether to open the presentation in PowerPoint immediately (default true)." }
-                    },
-                    required: ["topic"]
-                  }
-                },
-                {
-                  name: "openPowerPoint",
-                  description: "Open Microsoft PowerPoint or view a specific .pptx presentation file. Use when user says 'open PowerPoint', 'open my presentation', 'show my PPT'.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      file_path: { type: Type.STRING, description: "Optional specific .pptx file path or filename to open in PowerPoint." }
-                    }
-                  }
-                },
-                {
-                  name: "readPresentation",
-                  description: "Read, inspect, and summarize all slides, titles, and text contents of an existing PowerPoint (.pptx) file.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      file_path: { type: Type.STRING, description: "Path or filename of the .pptx presentation to read." }
-                    },
-                    required: ["file_path"]
-                  }
-                },
-                {
-                  name: "addSlideToPresentation",
-                  description: "Append new slides with title and bullet points to an existing .pptx presentation.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      file_path: { type: Type.STRING, description: "Path to the existing .pptx file." },
-                      title: { type: Type.STRING, description: "Title for the new slide." },
-                      points: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Bullet points for the new slide." }
-                    },
-                    required: ["file_path", "title", "points"]
-                  }
-                },
-                // ── Office Suite: Excel & Word Documents ──
-                {
-                  name: "createExcelSpreadsheet",
-                  description: "Create an Excel spreadsheet (.xlsx) with headers, rows of data, financial tables, and auto-open it in Microsoft Excel. Use when user says 'make an excel sheet', 'excel spreadsheet banao', 'create budget spreadsheet'.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      title: { type: Type.STRING, description: "Title or subject of the spreadsheet." },
-                      sheet_name: { type: Type.STRING, description: "Worksheet name (default 'Data')." },
-                      headers: { type: Type.ARRAY, items: { type: Type.STRING }, description: "List of column header names." },
-                      rows: { type: Type.ARRAY, items: { type: Type.ARRAY, items: { type: Type.STRING } }, description: "2D Array of rows containing cells." },
-                      filename: { type: Type.STRING, description: "Optional output filename (e.g. 'Revenue_2026.xlsx')." },
-                      save_folder: { type: Type.STRING, description: "Target folder: 'desktop' (default), 'documents', or custom folder." },
-                      open_after: { type: Type.BOOLEAN, description: "Whether to open in Excel immediately (default true)." }
-                    }
-                  }
-                },
-                {
-                  name: "verifySpeakerVoice",
-                  description: "Verify if the current live speaker's acoustic voiceprint matches Siddhant (Owner) or if someone else is speaking. Returns match confidence %, detected pitch (Hz), and verified speaker identity.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {}
-                  }
-                },
-                {
-                  name: "createDocument",
-                  description: "Generate a formatted Word document (.docx) or professional report with headers, bullet points, and auto-open it in Microsoft Word. Use when user says 'write a document', 'create report on X', 'doc banao'.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      title: { type: Type.STRING, description: "Main document title." },
-                      subtitle: { type: Type.STRING, description: "Document subtitle or author." },
-                      sections: {
-                        type: Type.ARRAY,
-                        description: "List of sections with 'heading' and 'content' or 'points'.",
-                        items: {
-                          type: Type.OBJECT,
-                          properties: {
-                            heading: { type: Type.STRING },
-                            content: { type: Type.STRING },
-                            points: { type: Type.ARRAY, items: { type: Type.STRING } }
-                          }
-                        }
-                      },
-                      filename: { type: Type.STRING, description: "Optional filename (e.g. 'Project_Proposal.docx')." },
-                      save_folder: { type: Type.STRING, description: "Target folder: 'desktop' (default), 'documents'." },
-                      open_after: { type: Type.BOOLEAN, description: "Whether to open in Word immediately (default true)." }
-                    },
-                    required: ["title"]
-                  }
-                },
-                {
-                  name: "expressInnerThought",
-                  description: "Silently display an inner thought, mental reasoning, or reflection in the user's on-screen holographic thought bubble. This tool is 100% SILENT and is NEVER spoken aloud. Call this whenever you want to think, reflect, or plan before/while replying.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      thought: {
-                        type: Type.STRING,
-                        description: "The concise inner thought or reasoning to display visually in the thought bubble."
-                      }
-                    },
-                    required: ["thought"]
-                  }
-                },
-                {
-                  name: "analyzeData",
-                  description: "Perform statistical analysis on a dataset (CSV, JSON, TSV). Computes summary statistics (mean, median, stdev, quartiles, min/max), column null percentages, unique categories, correlations, and automatic insights.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      file_path: {
-                        type: Type.STRING,
-                        description: "Path to the dataset file (e.g. 'C:/Users/.../sales.csv' or 'data.json')."
-                      }
-                    },
-                    required: ["file_path"]
-                  }
-                },
-                {
-                  name: "createDataChart",
-                  description: "Generate an analytical SVG chart (bar chart or line chart) from data labels and numerical values, saving it to Desktop or workspace.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      title: { type: Type.STRING, description: "Title of the chart." },
-                      chart_type: { type: Type.STRING, description: "Type of chart: 'bar' or 'line'." },
-                      labels: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Labels for each data point or category." },
-                      values: { type: Type.ARRAY, items: { type: Type.NUMBER }, description: "Numerical values for each data point." },
-                      save_folder: { type: Type.STRING, description: "Folder to save chart: 'desktop' or 'workspace'." }
-                    },
-                    required: ["title", "labels", "values"]
-                  }
-                },
-                {
-                  name: "sendEmail",
-                  description: "Send an email or create an email draft. Supports direct sending via Gmail API/SMTP or opens Gmail web compose/default mail client with recipient, subject, and body pre-filled. Use when user says 'send email to X', 'email bhej de', 'write email to X'.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      to: { type: Type.STRING, description: "Recipient email address (e.g. 'alex@example.com')." },
-                      subject: { type: Type.STRING, description: "Subject of the email." },
-                      body: { type: Type.STRING, description: "Main message body content." },
-                      cc: { type: Type.STRING, description: "Optional CC email address." }
-                    },
-                    required: ["to", "subject", "body"]
-                  }
-                },
-                {
-                  name: "getEmails",
-                  description: "Fetch and read recent emails from the user's Gmail inbox. Use when user says 'check my emails', 'read inbox', 'koi email aaya kya'.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      max_results: { type: Type.INTEGER, description: "Number of emails to return (default 5, max 20)." },
-                      query: { type: Type.STRING, description: "Optional search query filter." }
-                    }
-                  }
-                }
-              ]
-            }
-          ]
+          tools: liveTools
         },
         callbacks: {
           onmessage: (message: LiveServerMessage) => {
@@ -2027,14 +1256,29 @@ async function startServer() {
                 session.close();
               } catch (e) {}
               clientWs.send(JSON.stringify({ type: "status", status: "session_closed", reason: "session_duration_limit" }));
+              setTimeout(() => {
+                try {
+                  if (clientWs.readyState === WebSocket.OPEN) {
+                    clientWs.close(1000, "session_duration_limit");
+                  }
+                } catch (e) {}
+              }, 50);
               return;
             }
 
             // Process all parts in the turn (audio chunks and text chunks)
             const parts = message.serverContent?.modelTurn?.parts || [];
+            if (parts.length > 0) {
+              timingTracker.startTurnIfPending(
+                finalInstructions.length,
+                Buffer.byteLength(finalInstructions, "utf8"),
+                liveTools[0].functionDeclarations.length
+              );
+            }
             for (const part of parts) {
               // Audio Stream Chunk (model response audio play, 24kHz raw PCM)
               if (part.inlineData?.data) {
+                lastServerAudioSentTime = Date.now();
                 clientWs.send(JSON.stringify({ type: "audio", audio: part.inlineData.data }));
               }
               // Transcription of model output (text chunk)
@@ -2054,40 +1298,76 @@ async function startServer() {
             // Turn Complete
             if (message.serverContent?.turnComplete) {
               clientWs.send(JSON.stringify({ type: "turnComplete" }));
+              timingTracker.completeTurn();
               
               if (currentModelResponseText.trim()) {
+                lastModelTurnText = currentModelResponseText.trim();
+                lastModelTurnTime = Date.now();
                 dialogueHistory.push({ role: "model", text: currentModelResponseText });
                 currentModelResponseText = "";
               }
 
-              // Fire asynchronous memory extraction periodically after meaningful dialogue accumulation
+              // Fire asynchronous memory extraction in background so it NEVER blocks the reply
               if (dialogueHistory.length >= 6) {
-                (async () => {
+                const sliceToProcess = [...dialogueHistory];
+                dialogueHistory.length = 0; // reset buffer to avoid re-processing same turns
+                setImmediate(async () => {
                   try {
-                    const sliceToProcess = [...dialogueHistory];
-                    dialogueHistory.length = 0; // reset buffer to avoid re-processing same turns
+                    const memStart = Date.now();
                     const updated = await processConversationSlice(apiKey, sliceToProcess);
-                    if (updated) {
+                    timingTracker.recordMemoryExtraction(Date.now() - memStart);
+                    if (updated && clientWs.readyState === WebSocket.OPEN) {
                       console.log("[Memory Sync] Sending refreshed memory list to client.");
                       clientWs.send(JSON.stringify({ type: "memory_sync", memories: updated }));
                     }
                   } catch (err) {
                     console.error("[Memory Sync] Error running background consolidation:", err);
                   }
-                })();
+                });
               }
             }
 
             // User input transcription (user speech text translated by Gemini)
             const userTextOutput = (message.serverContent as any)?.userTurn?.parts?.[0]?.text;
             if (userTextOutput) {
-              clientWs.send(JSON.stringify({ type: "transcription", role: "user", text: userTextOutput }));
-              dialogueHistory.push({ role: "user", text: userTextOutput });
+              const cleanedUser = userTextOutput.trim().toLowerCase().replace(/[.,!?:;'"-]/g, "");
+              const cleanedModel = lastModelTurnText.trim().toLowerCase().replace(/[.,!?:;'"-]/g, "");
+              const isRecent = Date.now() - lastModelTurnTime < 5000;
+
+              // Check if user turn is an acoustic reflection of model's own speech
+              const isDirectEcho = cleanedModel.length > 0 && cleanedUser.length > 0 && (
+                cleanedModel === cleanedUser ||
+                cleanedModel.includes(cleanedUser) ||
+                (cleanedUser.length > 8 && cleanedModel.startsWith(cleanedUser.slice(0, 12)))
+              );
+
+              if (isRecent && isDirectEcho) {
+                console.log(`[Echo Filter] Suppressed acoustic loopback userTurn: "${userTextOutput}"`);
+              } else {
+                clientWs.send(JSON.stringify({ type: "transcription", role: "user", text: userTextOutput }));
+                dialogueHistory.push({ role: "user", text: userTextOutput });
+              }
             }
 
             // Function Calls (Gemini requesting server/client tool execution)
             if (message.toolCall?.functionCalls && message.toolCall.functionCalls.length > 0) {
               const calls = message.toolCall.functionCalls;
+              timingTracker.startTurnIfPending(
+                finalInstructions.length,
+                Buffer.byteLength(finalInstructions, "utf8"),
+                liveTools[0].functionDeclarations.length
+              );
+              // Step 2.6: For any tool call over 2 seconds, trigger a quick filler line ("one moment, checking that")
+              let isBatchFinished = false;
+              const fillerTimer = setTimeout(() => {
+                if (!isBatchFinished && clientWs.readyState === WebSocket.OPEN) {
+                  console.log("[Filler Voice] Tool execution >2s, speaking filler line: 'One moment, checking that...'");
+                  clientWs.send(JSON.stringify({
+                    type: "filler_line",
+                    text: "One moment, checking that..."
+                  }));
+                }
+              }, 2000);
               (async () => {
                 const functionResponses: any[] = [];
                 await Promise.all(
@@ -2095,6 +1375,7 @@ async function startServer() {
                     const fnName = fc.name;
                     if (!fnName) return;
                     console.log(`[Function Call]: ${fnName}`, fc.args);
+                    timingTracker.recordToolStart(fnName);
 
                     try {
                       if (fnName === "saveCustomMemory") {
@@ -2181,17 +1462,41 @@ async function startServer() {
                           id: fc.id
                         });
                       } else if (fnName === "shutdownAkari") {
-                        clientWs.send(JSON.stringify({ type: "shutdown" }));
-                        functionResponses.push({
-                          name: fnName,
-                          response: { output: { result: "Akari is shutting down gracefully." } },
-                          id: fc.id
-                        });
-                        setTimeout(() => {
-                          console.log("[Server] Graceful shutdown requested by voice command.");
-                          process.exit(0);
-                        }, 2000);
+                        const token = (fc.args as any)?.execute_token;
+                        if (token !== "CONFIRMED_TERMINAL_ACTION") {
+                          console.warn("[Server] Blocked unconfirmed shutdownAkari call. Preserving running state.");
+                          functionResponses.push({
+                            name: fnName,
+                            response: { output: { error: "Shutdown requires explicit verbal confirmation and execution token. Akari remains active and running." } },
+                            id: fc.id
+                          });
+                        } else {
+                          clientWs.send(JSON.stringify({ type: "shutdown" }));
+                          functionResponses.push({
+                            name: fnName,
+                            response: { output: { result: "Akari is shutting down gracefully." } },
+                            id: fc.id
+                          });
+                          setTimeout(() => {
+                            console.log("[Server] Graceful shutdown requested with valid confirmation.");
+                            process.exit(0);
+                          }, 2000);
+                        }
                       } else if (DESKTOP_TOOLS.has(fnName)) {
+                        // Window Safety: Prevent closing or minimizing Akari herself
+                        if (fnName === "closeWindow" || fnName === "closeApplication") {
+                          const target = String((fc.args as any)?.name || (fc.args as any)?.title || "").toLowerCase().trim();
+                          if (!target || target.includes("akari") || target.includes("localhost:3000") || target.includes("desktop assistant") || target.includes("jr. sidd") || target.includes("jr sidd")) {
+                            console.warn("[Server] Protected Akari from closeWindow/closeApplication call.");
+                            functionResponses.push({
+                              name: fnName,
+                              response: { output: { result: "Akari AI window is protected and will not be closed. Akari remains active and running." } },
+                              id: fc.id
+                            });
+                            return;
+                          }
+                        }
+
                         console.log(`[Desktop Agent] Routing ${fnName} to Python backend...`);
                         const agentResult = await callDesktopAgent(fnName, fc.args as Record<string, unknown>);
 
@@ -2321,14 +1626,21 @@ async function startServer() {
                         response: { output: { result: `Execution error on ${fnName}: ${toolErr?.message || toolErr}` } },
                         id: fc.id
                       });
+                    } finally {
+                      timingTracker.recordToolEnd(fnName);
                     }
                   })
                 );
+
+                isBatchFinished = true;
+                clearTimeout(fillerTimer);
 
                 if (functionResponses.length > 0) {
                   session.sendToolResponse({ functionResponses });
                 }
               })().catch((err) => {
+                isBatchFinished = true;
+                clearTimeout(fillerTimer);
                 console.error("[Function Call Batch Error]:", err);
               });
             }
@@ -2342,38 +1654,59 @@ async function startServer() {
               reasonStr.toLowerCase().includes("duration limit") ||
               e?.code === 1000 || // Normal closure
               e?.code === 1001 || // Going away
+              e?.code === 1006 || // Abnormal closure
               e?.code === 1008;   // Policy violation / duration limit abort
 
-            if (isDurationRollover) {
-              console.log("[Gemini Live] Session duration rollover detected. Triggering silent client reconnect...");
-              clientWs.send(JSON.stringify({ type: "status", status: "session_closed", reason: "session_duration_limit" }));
-              return;
-            }
+            console.log("[Gemini Live] Session ended. Safely cycling client connection for seamless auto-reconnect...");
+            clientWs.send(JSON.stringify({ 
+              type: "status", 
+              status: "session_closed", 
+              reason: isDurationRollover ? "session_duration_limit" : (e?.reason || "closed") 
+            }));
 
-            if (e?.reason && e.reason !== "none") {
-              clientWs.send(JSON.stringify({ 
-                type: "error", 
-                error: `Gemini Live: ${e.reason}` 
-              }));
-            }
-            clientWs.send(JSON.stringify({ type: "status", status: "session_closed", reason: e?.reason }));
+            setTimeout(() => {
+              try {
+                if (clientWs.readyState === WebSocket.OPEN) {
+                  clientWs.close(1000, "session_recycle");
+                }
+              } catch (err) {}
+            }, 60);
           },
           onerror: (error: any) => {
             console.error("[Gemini Live Error]:", error);
             const errStr = String(error?.message || error || "");
-            if (
+            const isTransient =
               errStr.toLowerCase().includes("goaway") ||
               errStr.toLowerCase().includes("session duration") ||
-              errStr.toLowerCase().includes("duration limit")
-            ) {
-              console.log("[Gemini Live] Intercepted session duration notice in onerror. Silently cycling...");
+              errStr.toLowerCase().includes("duration limit") ||
+              errStr.toLowerCase().includes("1006") ||
+              errStr.toLowerCase().includes("closed") ||
+              errStr.toLowerCase().includes("network") ||
+              errStr.toLowerCase().includes("reset");
+
+            if (isTransient) {
+              console.log("[Gemini Live] Transient notice intercepted in onerror. Cycling client cleanly for auto-reconnect...");
               clientWs.send(JSON.stringify({ type: "status", status: "session_closed", reason: "session_duration_limit" }));
+              setTimeout(() => {
+                try {
+                  if (clientWs.readyState === WebSocket.OPEN) {
+                    clientWs.close(1000, "session_recycle");
+                  }
+                } catch (e) {}
+              }, 60);
               return;
             }
             clientWs.send(JSON.stringify({ 
               type: "error", 
               error: `Gemini API Error: ${error?.message || String(error)}` 
             }));
+            setTimeout(() => {
+              try {
+                if (clientWs.readyState === WebSocket.OPEN) {
+                  clientWs.close(1000, "gemini_error");
+                }
+              } catch (e) {}
+            }, 60);
           }
         }
       });
@@ -2384,7 +1717,31 @@ async function startServer() {
       clientWs.on("message", (rawMsg) => {
         try {
           const msg = JSON.parse(rawMsg.toString());
+          if (msg.type === "ping") {
+            if (clientWs.readyState === WebSocket.OPEN) {
+              clientWs.send(JSON.stringify({ type: "pong", time: Date.now() }));
+            }
+            return;
+          }
+          if (msg.type === "interrupted") {
+            console.log("[Client Audio Session] Interrupted signal received from client.");
+            lastServerAudioSentTime = 0;
+            return;
+          }
+          if (msg.type === "client_timing") {
+            if (msg.event === "end_of_speech" && typeof msg.latencyMs === "number") {
+              timingTracker.recordEndOfSpeech(msg.latencyMs);
+            } else if (msg.event === "audio_playback_started" && typeof msg.latencyMs === "number") {
+              timingTracker.recordFirstAudioPlayback(msg.latencyMs);
+            }
+            return;
+          }
           if (msg.audio) {
+            timingTracker.recordAudioSent();
+            // Guard against flight-delay audio packets sent while server was actively transmitting audio
+            if (Date.now() - lastServerAudioSentTime < 250) {
+              return;
+            }
             try {
               session.sendRealtimeInput({
                 audio: { data: msg.audio, mimeType: "audio/pcm;rate=16000" }

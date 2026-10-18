@@ -55,6 +55,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.warning("Could not initialize wake word service: %s", e)
 
+    try:
+        from .tools.browser import warm_browser
+        warm_browser()
+    except Exception as e:
+        log.warning("Could not pre-warm browser: %s", e)
+
     yield
 
     try:
@@ -134,6 +140,37 @@ async def list_tools():
 async def execute(req: ExecuteRequest) -> ExecuteResponse:
     tool_name = req.tool
     args = req.args or {}
+    if tool_name not in TOOLS:
+        load_all()
+    if tool_name in ("createPresentation", "searchPresentationImages", "openPowerPoint", "readPresentation", "addSlideToPresentation"):
+        try:
+            import importlib
+            import agent.tools.powerpoint
+            importlib.reload(agent.tools.powerpoint)
+        except Exception as err:
+            log.warning("Could not hot-reload powerpoint module: %s", err)
+    if tool_name in ("getNews", "searchWebAnswer", "searchGoogle", "searchWeb", "searchGoogleMaps", "searchGitHub"):
+        try:
+            import importlib
+            import agent.tools.news
+            import agent.tools.search
+            importlib.reload(agent.tools.news)
+            importlib.reload(agent.tools.search)
+        except Exception as err:
+            log.warning("Could not hot-reload news/search modules: %s", err)
+    if tool_name in ("buildAnimatedWebsite", "researchDesignReferences", "qualityCheckWebsite", "searchAndBuildLocalWebsite"):
+        try:
+            import importlib
+            import agent.tools.files
+            importlib.reload(agent.tools.files)
+            import agent.tools.reference_designer
+            import agent.tools.website_templates
+            import agent.tools.website_builder
+            importlib.reload(agent.tools.reference_designer)
+            importlib.reload(agent.tools.website_templates)
+            importlib.reload(agent.tools.website_builder)
+        except Exception as err:
+            log.warning("Could not hot-reload website modules: %s", err)
     if tool_name not in TOOLS:
         return ExecuteResponse(ok=False, error=f"Unknown tool: {tool_name}", tool=tool_name)
     handler = TOOLS[tool_name]
