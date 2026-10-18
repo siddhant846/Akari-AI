@@ -9,7 +9,7 @@
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
-    "dev": "tsx server.ts",
+    "dev": "tsx watch server.ts",
     "app": "concurrently -k -n \"server,electron\" -c \"cyan,magenta\" \"tsx server.ts\" \"wait-on -t 60000 http-get://127.0.0.1:3000 && electron .\"",
     "electron": "electron .",
     "electron:dev": "npm run app",
