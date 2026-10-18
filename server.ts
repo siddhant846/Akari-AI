@@ -1206,9 +1206,7 @@ async function startServer() {
         "   - Mirror and support the user's mood naturally (celebrate wins, provide calm reassurance when stressed or tired).\n" +
         "17. CRITICAL CONTINUOUS OPERATION RULE:\n" +
         "   - After building a website, running scripts, or completing any task, Akari MUST ALWAYS REMAIN FULLY AWAKE, ACTIVE, AND VISIBLE ON SCREEN. NEVER close, exit, sleep, minimize, or turn off after completing a task. NEVER call 'shutdownAkari', 'closeWindow', or 'minimizeWindow' on yourself.\n" +
-        "18. FAST FILLER DIRECTIVE (LOW LATENCY PERCEPTION):\n" +
-        "   - For any action or query taking more than 2 seconds, immediately deliver a brief conversational filler line ('One moment, checking that!') before calling the tool.\n" +
-        "19. ZERO REPETITION DIRECTIVE:\n" +
+        "18. ZERO REPETITION DIRECTIVE:\n" +
         "   - NEVER repeat your own previous statement, and NEVER echo back the exact words the user just said.\n" +
         "   - If the user's input sounds identical or similar to what you just said (e.g. from acoustic room echo), DO NOT repeat yourself. Smoothly continue forward or ask what they need next.\n";
 
@@ -1367,17 +1365,6 @@ async function startServer() {
                 Buffer.byteLength(finalInstructions, "utf8"),
                 liveTools[0].functionDeclarations.length
               );
-              // Step 2.6: For any tool call over 2 seconds, trigger a quick filler line ("one moment, checking that")
-              let isBatchFinished = false;
-              const fillerTimer = setTimeout(() => {
-                if (!isBatchFinished && clientWs.readyState === WebSocket.OPEN) {
-                  console.log("[Filler Voice] Tool execution >2s, speaking filler line: 'One moment, checking that...'");
-                  clientWs.send(JSON.stringify({
-                    type: "filler_line",
-                    text: "One moment, checking that..."
-                  }));
-                }
-              }, 2000);
               (async () => {
                 const functionResponses: any[] = [];
                 await Promise.all(
@@ -1642,15 +1629,10 @@ async function startServer() {
                   })
                 );
 
-                isBatchFinished = true;
-                clearTimeout(fillerTimer);
-
                 if (functionResponses.length > 0) {
                   session.sendToolResponse({ functionResponses });
                 }
               })().catch((err) => {
-                isBatchFinished = true;
-                clearTimeout(fillerTimer);
                 console.error("[Function Call Batch Error]:", err);
               });
             }

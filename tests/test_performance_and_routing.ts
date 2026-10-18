@@ -133,7 +133,9 @@ assert(audioSrc.includes("initialPreRoll = this.lowBandwidthMode ? 0.025 : 0.010
 
 const routingSrc = fs.readFileSync("server_tools_routing.ts", "utf-8");
 assert(!routingSrc.includes("verifySpeakerVoice"), "verifySpeakerVoice tool eliminated from core tools to stop latency spikes");
-assert(routingSrc.includes("NEVER call this during conversational voice replies or direct questions"), "expressInnerThought restricted from conversational queries to eliminate tool call round-trips");
+assert(!routingSrc.includes("expressInnerThought"), "expressInnerThought eliminated from core tools to prevent speech delays");
+assert(!serverSrc.includes("One moment, checking that"), "Robotic filler line directive removed from system prompt");
+assert(!audioSrc.includes("filler_line"), "Robotic speechSynthesis filler voice removed from client audio");
 
 // ---------------------------------------------------------------------------
 // 5. SUMMARY

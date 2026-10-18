@@ -686,23 +686,6 @@ export class AkariAudioSession {
           this.playAudioPCMChunk(data.audio);
         }
 
-        // Filler line voice cue for tools taking > 2 seconds
-        if (data.type === "filler_line" && data.text) {
-          console.log("[Akari Audio] Filler voice announcement:", data.text);
-          if (typeof window !== "undefined" && "speechSynthesis" in window) {
-            try {
-              const utterance = new SpeechSynthesisUtterance(data.text);
-              utterance.rate = 1.15;
-              utterance.pitch = 1.1;
-              const voices = window.speechSynthesis.getVoices();
-              const femaleVoice = voices.find(v => v.name.toLowerCase().includes("female") || v.name.toLowerCase().includes("zira") || v.lang.startsWith("en"));
-              if (femaleVoice) utterance.voice = femaleVoice;
-              window.speechSynthesis.speak(utterance);
-            } catch (synthErr) {
-              console.warn("[Akari Audio] SpeechSynthesis note:", synthErr);
-            }
-          }
-        }
 
         // Interruption signal
         if (data.type === "interrupted") {

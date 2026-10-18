@@ -104,21 +104,6 @@ export const CORE_TOOLS: any[] = [
                   description: "Take a screenshot and run OCR to extract visible text from the screen.",
                   parameters: { type: Type.OBJECT, properties: { max_chars: { type: Type.INTEGER, description: "Max OCR chars (default 1500)." } } }
                 },
-
-  {
-                  name: "expressInnerThought",
-                  description: "Silently display an inner thought in the user's on-screen thought bubble ONLY during complex multi-step tasks (e.g. website building, coding, multi-step scraping). NEVER call this during conversational voice replies or direct questions.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      thought: {
-                        type: Type.STRING,
-                        description: "The concise inner thought or reasoning to display visually in the thought bubble."
-                      }
-                    },
-                    required: ["thought"]
-                  }
-                },
 ];
 
 export const BROWSER_TOOLS: any[] = [
@@ -128,24 +113,9 @@ export const BROWSER_TOOLS: any[] = [
                   parameters: { type: Type.OBJECT, properties: { url: { type: Type.STRING, description: "URL to open." } }, required: ["url"] }
                 },
   {
-                  name: "desktopBrowserOpenTab",
-                  description: "Open a new tab in the desktop automation browser.",
-                  parameters: { type: Type.OBJECT, properties: { url: { type: Type.STRING, description: "URL for the new tab." } } }
-                },
-  {
-                  name: "desktopBrowserCloseTab",
-                  description: "Close the active tab in the desktop automation browser.",
-                  parameters: { type: Type.OBJECT, properties: {} }
-                },
-  {
                   name: "desktopBrowserSearch",
                   description: "Search within the desktop automation browser.",
                   parameters: { type: Type.OBJECT, properties: { query: { type: Type.STRING, description: "Search query." }, engine: { type: Type.STRING, description: "Engine: google, youtube, github, duckduckgo, bing." } }, required: ["query"] }
-                },
-  {
-                  name: "desktopBrowserOpenYoutubeVideo",
-                  description: "Search YouTube and open the first result's canonical video URL without relying on a fragile DOM click.",
-                  parameters: { type: Type.OBJECT, properties: { query: { type: Type.STRING, description: "YouTube search query." } }, required: ["query"] }
                 },
   {
                   name: "desktopBrowserClick",
@@ -156,11 +126,6 @@ export const BROWSER_TOOLS: any[] = [
                   name: "desktopBrowserType",
                   description: "Type text into the active element in the desktop automation browser.",
                   parameters: { type: Type.OBJECT, properties: { text: { type: Type.STRING, description: "Text to type." }, selector: { type: Type.STRING, description: "Optional CSS selector for a specific input." }, clear: { type: Type.BOOLEAN, description: "Clear before typing (default true)." } }, required: ["text"] }
-                },
-  {
-                  name: "desktopBrowserFillForm",
-                  description: "Fill multiple form fields and optionally submit in the desktop automation browser.",
-                  parameters: { type: Type.OBJECT, properties: { fields: { type: Type.OBJECT, description: "Object of selector -> value pairs." }, submit: { type: Type.STRING, description: "Optional submit button selector." } }, required: ["fields"] }
                 },
   {
                   name: "desktopBrowserGoBack",
@@ -276,21 +241,6 @@ export const FILES_TOOLS: any[] = [
                   name: "openFile",
                   description: "Open any file (PowerPoint .pptx, Word .docx, PDF, image, Excel .xlsx, etc.) with its default Windows application or reveal it in File Explorer. Supports fuzzy search by filename across Desktop, Downloads, and Documents.",
                   parameters: { type: Type.OBJECT, properties: { path: { type: Type.STRING, description: "Full or relative path to the file." }, name: { type: Type.STRING, description: "Filename or keyword to search for (e.g. 'presentation', 'Akari_AI_Demo.pptx')." }, reveal_in_explorer: { type: Type.BOOLEAN, description: "If true, opens File Explorer with the file selected/highlighted instead of directly launching." } } }
-                },
-  {
-                  name: "switchWorkspace",
-                  description: "Switch to a specific Hyprland workspace by number. Use when user says 'go to workspace 3' or 'switch to workspace 1'.",
-                  parameters: { type: Type.OBJECT, properties: { workspace: { type: Type.STRING, description: "Workspace number or name (e.g. '3', 'special:scratchpad')." } }, required: ["workspace"] }
-                },
-  {
-                  name: "listWorkspaces",
-                  description: "List all available Hyprland workspaces with their IDs.",
-                  parameters: { type: Type.OBJECT, properties: {} }
-                },
-  {
-                  name: "moveToWorkspace",
-                  description: "Move the active window to a different Hyprland workspace.",
-                  parameters: { type: Type.OBJECT, properties: { workspace: { type: Type.STRING, description: "Target workspace number." } }, required: ["workspace"] }
                 },
 ];
 
@@ -417,28 +367,14 @@ export const SYSTEM_TOOLS: any[] = [
                   parameters: { type: Type.OBJECT, properties: { execute_token: { type: Type.STRING, description: "Confirmation token from requestTerminalAction." } }, required: ["execute_token"] }
                 },
   {
-                  name: "changeBackground",
-                  description: "Changes the visual theme or atmospheric glow color of Akari's interface.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      color: {
-                        type: Type.STRING,
-                        description: "The theme color name (violet, crimson, emerald, celestial, gold, rose, charcoal)"
-                      }
-                    },
-                    required: ["color"]
-                  }
-                },
-  {
                   name: "cameraList",
                   description: "List available webcam devices on this computer. Use when the user asks what cameras are available or before turning a camera on.",
                   parameters: { type: Type.OBJECT, properties: {} }
                 },
   {
                   name: "cameraOn",
-                  description: "Turn the webcam ON in a floating viewer window without disturbing the tiling layout of other windows. Use when user says 'camera on karo', 'webcam chalao', 'kamera kholo'. Optionally pass a specific device.",
-                  parameters: { type: Type.OBJECT, properties: { device: { type: Type.STRING, description: "Camera device path, e.g. '/dev/video0'. Defaults to the first camera found." } } }
+                  description: "Turn the webcam ON in a floating viewer window. Use when user says 'camera on karo', 'webcam chalao', 'kamera kholo'. Optionally pass a specific device index.",
+                  parameters: { type: Type.OBJECT, properties: { device: { type: Type.STRING, description: "Camera device index or path (default '0')." } } }
                 },
   {
                   name: "cameraOff",
@@ -478,11 +414,6 @@ export const GOOGLE_TOOLS: any[] = [
                   }
                 },
   {
-                  name: "searchYouTube",
-                  description: "Search YouTube and open results in the default browser.",
-                  parameters: { type: Type.OBJECT, properties: { query: { type: Type.STRING, description: "Search query." } }, required: ["query"] }
-                },
-  {
                   name: "playYouTubeVideo",
                   description: "Search, select, and directly play a YouTube video or song in the browser. Use when user says 'play X on YouTube', 'play song X', 'play lofi beats', 'start playing video'.",
                   parameters: {
@@ -493,22 +424,6 @@ export const GOOGLE_TOOLS: any[] = [
                       url: { type: Type.STRING, description: "Direct YouTube video URL if known." }
                     }
                   }
-                },
-  {
-                  name: "selectYouTubeVideo",
-                  description: "Select and play a specific video from YouTube search results by number or title. Use when user says 'select video 2', 'play the first one', 'choose the third video', 'select video'.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      index: { type: Type.INTEGER, description: "The 1-based index number of the video to play (default 1)." },
-                      query: { type: Type.STRING, description: "Optional title or keyword to filter and select." }
-                    }
-                  }
-                },
-  {
-                  name: "searchGoogle",
-                  description: "Search Google and open results in the default browser.",
-                  parameters: { type: Type.OBJECT, properties: { query: { type: Type.STRING, description: "Search query." } }, required: ["query"] }
                 },
   {
                   name: "sendEmail",
@@ -604,27 +519,6 @@ export const SEARCH_TOOLS: any[] = [
                   description: "Get current weather for a location. Use when user asks about weather, temperature, or climate.",
                   parameters: { type: Type.OBJECT, properties: { location: { type: Type.STRING, description: "City name (e.g. 'Mumbai', 'Delhi', 'New York')." } }, required: ["location"] }
                 },
-  {
-                  name: "auditLocalBusinesses",
-                  description: "Scans local businesses (restaurants, cafes, clinics, salons, etc.) in a given city or near the user, checking whether each business has an active official website or lacks one.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      category: {
-                        type: Type.STRING,
-                        description: "Business category, e.g. 'restaurant', 'cafe', 'bakery', 'salon', 'bar', 'clinic'."
-                      },
-                      location: {
-                        type: Type.STRING,
-                        description: "Optional city or area name (e.g. 'Pune', 'Mumbai', 'Downtown'). If omitted, automatically detects user's location."
-                      },
-                      limit: {
-                        type: Type.INTEGER,
-                        description: "Maximum number of local businesses to inspect (default 8)."
-                      }
-                    }
-                  }
-                },
 ];
 
 export const CODING_TOOLS: any[] = [
@@ -664,11 +558,6 @@ export const CODING_TOOLS: any[] = [
                   parameters: { type: Type.OBJECT, properties: { command: { type: Type.STRING, description: "The terminal command to check." } }, required: ["command"] }
                 },
   {
-                  name: "installPackage",
-                  description: "SECOND STEP: install a package using pacman. Requires a valid execute_token from requestTerminalAction.",
-                  parameters: { type: Type.OBJECT, properties: { package: { type: Type.STRING, description: "The confirmed package name." }, execute_token: { type: Type.STRING, description: "Confirmation token from requestTerminalAction." } }, required: ["package", "execute_token"] }
-                },
-  {
                   name: "createPresentation",
                   description: "Generate an executive designer-grade multi-slide PowerPoint presentation (.pptx) with curated 60-30-10 palettes, FLOWCHARTS with vector arrow connectors, MULTI-TIER SYSTEM ARCHITECTURE diagrams, REAL DOWNLOADED WEB IMAGES, branching decision logic, metric callouts, speaker notes, and auto-open it in Microsoft PowerPoint. Use when user says 'make a ppt', 'presentation banao', 'create slides on X'.",
                   parameters: {
@@ -705,18 +594,6 @@ export const CODING_TOOLS: any[] = [
                       open_after: { type: Type.BOOLEAN, description: "Whether to open the presentation in PowerPoint immediately (default true)." }
                     },
                     required: ["topic"]
-                  }
-                },
-  {
-                  name: "searchPresentationImages",
-                  description: "Search and download high-resolution web graphics, photos, or diagrams matching a query to embed into slides or review. Use when user asks to search or fetch pictures/diagrams for a presentation.",
-                  parameters: {
-                    type: Type.OBJECT,
-                    properties: {
-                      query: { type: Type.STRING, description: "The image/diagram search query (e.g. 'neural network architecture diagram', 'solar energy farm high res')." },
-                      topic: { type: Type.STRING, description: "Optional topic context to refine image results." }
-                    },
-                    required: ["query"]
                   }
                 },
   {
