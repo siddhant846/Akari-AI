@@ -114,7 +114,7 @@ export const CORE_TOOLS: any[] = [
                 },
   {
                   name: "expressInnerThought",
-                  description: "Silently display an inner thought, mental reasoning, or reflection in the user's on-screen holographic thought bubble. This tool is 100% SILENT and is NEVER spoken aloud. Call this whenever you want to think, reflect, or plan before/while replying.",
+                  description: "Silently display an inner thought in the user's on-screen thought bubble ONLY during complex multi-step tasks (e.g. website building, coding, multi-step scraping). NEVER call this during conversational voice replies or direct questions.",
                   parameters: {
                     type: Type.OBJECT,
                     properties: {

@@ -109,7 +109,30 @@ assert(!shouldTriggerSearch("Write a story about a brave cat"), "Creative reques
 assert(!shouldTriggerSearch("What is photosynthesis?"), "General science fact does not trigger search");
 
 // ---------------------------------------------------------------------------
-// 4. SUMMARY
+// 4. ULTRA-LOW LATENCY VOICE ENDPOINTING & VAD
+// ---------------------------------------------------------------------------
+console.log("\nTest Suite 4: Ultra-Low Latency Voice Endpointing & Instant Turn-Taking");
+
+import { StartSensitivity, EndSensitivity } from "@google/genai";
+import * as fs from "fs";
+
+assert(StartSensitivity.START_SENSITIVITY_HIGH === "START_SENSITIVITY_HIGH", "StartSensitivity HIGH is available in SDK");
+assert(EndSensitivity.END_SENSITIVITY_HIGH === "END_SENSITIVITY_HIGH", "EndSensitivity HIGH is available in SDK");
+
+const serverSrc = fs.readFileSync("server.ts", "utf-8");
+assert(serverSrc.includes("silenceDurationMs: 250"), "Server configures 250ms silence detection for instant Gemini Live endpointing");
+assert(serverSrc.includes("endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_HIGH"), "Server sets EndSensitivity to HIGH");
+assert(serverSrc.includes("session.sendClientContent({ turnComplete: true })"), "Server emits immediate turnComplete on client end-of-speech");
+
+const audioSrc = fs.readFileSync("src/lib/audio.ts", "utf-8");
+assert(audioSrc.includes("now - this.silenceStartTimestamp >= 280"), "Client VAD silence threshold tuned to 280ms");
+assert(audioSrc.includes('endOfTurn: true'), "Client sends endOfTurn signal immediately upon silence");
+
+const routingSrc = fs.readFileSync("server_tools_routing.ts", "utf-8");
+assert(routingSrc.includes("NEVER call this during conversational voice replies or direct questions"), "expressInnerThought restricted from conversational queries to eliminate tool call round-trips");
+
+// ---------------------------------------------------------------------------
+// 5. SUMMARY
 // ---------------------------------------------------------------------------
 console.log("\n=======================================================");
 console.log(`TOTAL TESTS: ${passCount + failCount} | PASSED: ${passCount} | FAILED: ${failCount}`);

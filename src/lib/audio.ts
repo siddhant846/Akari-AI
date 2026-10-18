@@ -427,27 +427,28 @@ export class AkariAudioSession {
           if (!this.silenceStartTimestamp) {
             this.silenceStartTimestamp = now;
           }
-          if (now - this.silenceStartTimestamp >= 600) {
+          if (now - this.silenceStartTimestamp >= 280) {
             const vadLatency = now - this.lastSpeechTimestamp;
             this.isUserTalking = false;
             if (this.ws && this.ws.readyState === WebSocket.OPEN) {
               this.ws.send(JSON.stringify({
                 type: "client_timing",
                 event: "end_of_speech",
-                latencyMs: vadLatency
+                latencyMs: vadLatency,
+                endOfTurn: true
               }));
             }
           }
         }
 
         // Response Speed & VAD Continuity:
-        // Gemini Live relies on receiving trailing silence in the PCM audio stream to trigger its neural VAD endpointing (~300-400ms).
-        // In standard mode: stream continuously while listening so responses are instantaneous (<1s).
-        // In low-bandwidth mode: preserve 20 frames (~640ms) of trailing silence so Gemini triggers immediately before pausing stream.
+        // Gemini Live relies on receiving trailing silence in the PCM audio stream to trigger its neural VAD endpointing (~250ms).
+        // In standard mode: stream continuously while listening so responses are instantaneous.
+        // In low-bandwidth mode: preserve 8 frames (~250ms) of trailing silence so Gemini triggers immediately before pausing stream.
         if (this.lowBandwidthMode) {
           const isSpeaking = rms >= 0.009;
           if (isSpeaking) {
-            this.speechHangoverFrames = 20;
+            this.speechHangoverFrames = 8;
           } else if (this.speechHangoverFrames > 0) {
             this.speechHangoverFrames--;
           }
@@ -896,7 +897,7 @@ export class AkariAudioSession {
       if (this.currentState !== "speaking") {
         this.setState("speaking");
         // Pre-roll buffer cushion ONLY on initial playback start to absorb network jitter
-        const initialPreRoll = this.lowBandwidthMode ? 0.050 : 0.025;
+        const initialPreRoll = this.lowBandwidthMode ? 0.030 : 0.015;
         this.nextStartTime = currentTime + initialPreRoll;
       } else {
         // In the middle of speech, if an underrun happened due to network jitter,

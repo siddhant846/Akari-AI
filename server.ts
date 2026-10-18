@@ -6,7 +6,7 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 import { WebSocketServer } from "ws";
-import { GoogleGenAI, Modality, Type, LiveServerMessage } from "@google/genai";
+import { GoogleGenAI, Modality, Type, LiveServerMessage, StartSensitivity, EndSensitivity } from "@google/genai";
 import dotenv from "dotenv";
 import * as fs from "fs";
 import { spawn, execSync } from "child_process";
@@ -1110,10 +1110,10 @@ async function startServer() {
       if (currentSettings.innerThoughtsEnabled !== false) {
         baseInstructions += 
           `\nINNER THOUGHTS & MENTAL ACTIVITY PROTOCOL (SILENT VISUAL ONLY):\n` +
-          `- You have a special tool called 'expressInnerThought'.\n` +
+          `- STRICT ZERO-LATENCY RULE: For standard conversation, casual chat, and direct voice questions: NEVER call 'expressInnerThought' or any other tool. Begin speaking your vocal answer immediately with 0 delay!\n` +
+          `- You have a special tool called 'expressInnerThought'. ONLY call 'expressInnerThought({ thought: "..." })' during complex multi-step automated tasks (e.g. building websites, coding, multi-step browser tasks).\n` +
           `- ABSOLUTE SPOKEN VOICE RULE: You must NEVER speak, voice, pronounce, read, or whisper your inner thoughts aloud!\n` +
-          `- NEVER output <think> tags, parentheses, or thought text in your spoken response!\n` +
-          `- Whenever you want to reflect, plan an action, or display your inner monologue, call the 'expressInnerThought({ thought: "..." })' tool. Your thought will appear in the user's holographic thought bubble completely SILENTLY with zero sound.\n`;
+          `- NEVER output <think> tags, parentheses, or thought text in your spoken response!\n`;
       }
 
       if (speakerRecognition) {
@@ -1136,6 +1136,7 @@ async function startServer() {
 "   - Response Latency: INSTANTANEOUS (0 DELAY). As soon as the user finishes speaking, begin speaking your reply within milliseconds without thinking pause.\n" +
 "   - Tone & Delivery: Fast-paced, crisp, energetic, articulate, and punchy.\n" +
 "   - Conciseness: Maximum 1 to 2 sharp sentences. Answer immediately without pleasantries, long intros, or hesitation (NEVER say 'Sure! I can help with that...').\n" +
+"   - ZERO INTERMEDIATE CALLS: Do NOT call expressInnerThought or search tools before answering conversational voice questions.\n" +
 "4. SPEECH PATTERNS & ZERO STALLING:\n" +
 "   - Deliver the direct answer or action first.\n" +
 "   - Instant turn-taking: Speak with brisk pace and seamless conversation flow.\n" +
@@ -1242,6 +1243,14 @@ async function startServer() {
           responseModalities: [Modality.AUDIO],
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName } },
+          },
+          realtimeInputConfig: {
+            automaticActivityDetection: {
+              startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_HIGH,
+              endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_HIGH,
+              prefixPaddingMs: 20,
+              silenceDurationMs: 250,
+            }
           },
           systemInstruction: finalInstructions,
           tools: liveTools
@@ -1731,8 +1740,23 @@ async function startServer() {
           if (msg.type === "client_timing") {
             if (msg.event === "end_of_speech" && typeof msg.latencyMs === "number") {
               timingTracker.recordEndOfSpeech(msg.latencyMs);
+              if (msg.endOfTurn !== false) {
+                try {
+                  session.sendClientContent({ turnComplete: true });
+                } catch (turnErr) {
+                  /* best-effort live dispatch */
+                }
+              }
             } else if (msg.event === "audio_playback_started" && typeof msg.latencyMs === "number") {
               timingTracker.recordFirstAudioPlayback(msg.latencyMs);
+            }
+            return;
+          }
+          if (msg.type === "end_of_turn") {
+            try {
+              session.sendClientContent({ turnComplete: true });
+            } catch (turnErr) {
+              /* best-effort */
             }
             return;
           }
