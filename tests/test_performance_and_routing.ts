@@ -120,13 +120,15 @@ assert(StartSensitivity.START_SENSITIVITY_HIGH === "START_SENSITIVITY_HIGH", "St
 assert(EndSensitivity.END_SENSITIVITY_HIGH === "END_SENSITIVITY_HIGH", "EndSensitivity HIGH is available in SDK");
 
 const serverSrc = fs.readFileSync("server.ts", "utf-8");
-assert(serverSrc.includes("silenceDurationMs: 250"), "Server configures 250ms silence detection for instant Gemini Live endpointing");
+assert(serverSrc.includes("silenceDurationMs: 200"), "Server configures 200ms silence detection for instant Gemini Live endpointing");
+assert(serverSrc.includes("thinkingBudget: 0"), "Server disables thinking budget (0) to eliminate internal reasoning delay");
 assert(serverSrc.includes("endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_HIGH"), "Server sets EndSensitivity to HIGH");
 assert(serverSrc.includes("session.sendClientContent({ turnComplete: true })"), "Server emits immediate turnComplete on client end-of-speech");
 
 const audioSrc = fs.readFileSync("src/lib/audio.ts", "utf-8");
-assert(audioSrc.includes("now - this.silenceStartTimestamp >= 280"), "Client VAD silence threshold tuned to 280ms");
+assert(audioSrc.includes("now - this.silenceStartTimestamp >= 220"), "Client VAD silence threshold tuned to 220ms");
 assert(audioSrc.includes('endOfTurn: true'), "Client sends endOfTurn signal immediately upon silence");
+assert(audioSrc.includes("initialPreRoll = this.lowBandwidthMode ? 0.025 : 0.010"), "Client playback pre-roll optimized to 10ms");
 
 const routingSrc = fs.readFileSync("server_tools_routing.ts", "utf-8");
 assert(routingSrc.includes("NEVER call this during conversational voice replies or direct questions"), "expressInnerThought restricted from conversational queries to eliminate tool call round-trips");

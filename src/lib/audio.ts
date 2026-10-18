@@ -427,7 +427,7 @@ export class AkariAudioSession {
           if (!this.silenceStartTimestamp) {
             this.silenceStartTimestamp = now;
           }
-          if (now - this.silenceStartTimestamp >= 280) {
+          if (now - this.silenceStartTimestamp >= 220) {
             const vadLatency = now - this.lastSpeechTimestamp;
             this.isUserTalking = false;
             if (this.ws && this.ws.readyState === WebSocket.OPEN) {
@@ -897,7 +897,7 @@ export class AkariAudioSession {
       if (this.currentState !== "speaking") {
         this.setState("speaking");
         // Pre-roll buffer cushion ONLY on initial playback start to absorb network jitter
-        const initialPreRoll = this.lowBandwidthMode ? 0.030 : 0.015;
+        const initialPreRoll = this.lowBandwidthMode ? 0.025 : 0.010;
         this.nextStartTime = currentTime + initialPreRoll;
       } else {
         // In the middle of speech, if an underrun happened due to network jitter,

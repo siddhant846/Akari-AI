@@ -1244,12 +1244,17 @@ async function startServer() {
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName } },
           },
+          temperature: 0.7,
+          maxOutputTokens: 512,
+          thinkingConfig: {
+            thinkingBudget: 0,
+          },
           realtimeInputConfig: {
             automaticActivityDetection: {
               startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_HIGH,
               endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_HIGH,
-              prefixPaddingMs: 20,
-              silenceDurationMs: 250,
+              prefixPaddingMs: 10,
+              silenceDurationMs: 200,
             }
           },
           systemInstruction: finalInstructions,
@@ -1740,7 +1745,7 @@ async function startServer() {
           if (msg.type === "client_timing") {
             if (msg.event === "end_of_speech" && typeof msg.latencyMs === "number") {
               timingTracker.recordEndOfSpeech(msg.latencyMs);
-              if (msg.endOfTurn !== false) {
+              if (msg.endOfTurn !== false && session && Date.now() - lastServerAudioSentTime > 400) {
                 try {
                   session.sendClientContent({ turnComplete: true });
                 } catch (turnErr) {
@@ -1753,10 +1758,12 @@ async function startServer() {
             return;
           }
           if (msg.type === "end_of_turn") {
-            try {
-              session.sendClientContent({ turnComplete: true });
-            } catch (turnErr) {
-              /* best-effort */
+            if (session && Date.now() - lastServerAudioSentTime > 400) {
+              try {
+                session.sendClientContent({ turnComplete: true });
+              } catch (turnErr) {
+                /* best-effort */
+              }
             }
             return;
           }
