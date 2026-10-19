@@ -18,12 +18,15 @@ import android.provider.Settings;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
+import android.webkit.WebSettings;
 import android.widget.Toast;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.BridgeActivity;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class MainActivity extends BridgeActivity {
@@ -180,22 +183,70 @@ public class MainActivity extends BridgeActivity {
         public void showToast(String message) {
             runOnUiThread(() -> Toast.makeText(context, message, Toast.LENGTH_SHORT).show());
         }
+
+        @JavascriptInterface
+        public boolean startVoiceService() {
+            try {
+                AkariBackgroundVoiceService.start(context);
+                return true;
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        @JavascriptInterface
+        public boolean stopVoiceService() {
+            try {
+                AkariBackgroundVoiceService.stop(context);
+                return true;
+            } catch (Exception e) {
+                return false;
+            }
+        }
+    }
+
+    private void checkAndRequestPermissions() {
+        List<String> permissions = new ArrayList<>();
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            permissions.add(Manifest.permission.RECORD_AUDIO);
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.MODIFY_AUDIO_SETTINGS) != PackageManager.PERMISSION_GRANTED) {
+            permissions.add(Manifest.permission.MODIFY_AUDIO_SETTINGS);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                permissions.add(Manifest.permission.POST_NOTIFICATIONS);
+            }
+        }
+
+        if (!permissions.isEmpty()) {
+            ActivityCompat.requestPermissions(this, permissions.toArray(new String[0]), 1001);
+        } else {
+            AkariBackgroundVoiceService.start(this);
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == 1001) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                AkariBackgroundVoiceService.start(this);
+            }
+        }
     }
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Auto-request microphone and audio permissions at app startup
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, new String[]{
-                Manifest.permission.RECORD_AUDIO,
-                Manifest.permission.MODIFY_AUDIO_SETTINGS
-            }, 1001);
-        }
+        checkAndRequestPermissions();
 
         // Auto-grant WebView media stream permissions and register native AndroidBridge
         if (this.bridge != null && this.bridge.getWebView() != null) {
+            WebSettings webSettings = this.bridge.getWebView().getSettings();
+            webSettings.setMediaPlaybackRequiresUserGesture(false);
+
             this.bridge.getWebView().addJavascriptInterface(new AndroidBridge(this), "AndroidBridge");
             this.bridge.getWebView().setWebChromeClient(new WebChromeClient() {
                 @Override
@@ -203,6 +254,34 @@ public class MainActivity extends BridgeActivity {
                     runOnUiThread(() -> request.grant(request.getResources()));
                 }
             });
+        }
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            AkariBackgroundVoiceService.start(this);
+        }
+    }
+
+    @Override
+    public void onPause() {
+        super.onPause();
+        // Prevent WebView from freezing Web Audio and WebSocket streaming when switching apps
+        if (this.bridge != null && this.bridge.getWebView() != null) {
+            this.bridge.getWebView().onResume();
+            this.bridge.getWebView().resumeTimers();
+        }
+    }
+
+    @Override
+    public void onStop() {
+        super.onStop();
+        // Keep WebView audio processing active when app is running in background
+        if (this.bridge != null && this.bridge.getWebView() != null) {
+            this.bridge.getWebView().onResume();
+            this.bridge.getWebView().resumeTimers();
         }
     }
 }

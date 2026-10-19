@@ -26,6 +26,7 @@
 18. [Memory & Reminder Subsystems](#-memory--reminder-subsystems)
 19. [Automated Codebase Audit & Benchmark Suite](#-automated-codebase-audit--benchmark-suite)
 20. [Building Single-Click Windows .exe Installer Package](#-building-single-click-windows-exe-installer-package)
+21. [Mobile Background Voice & Detached PC Architecture](#-mobile-background-voice--detached-pc-architecture)
 
 ---
 
@@ -612,6 +613,32 @@ npm run dist:portable
 The output is generated in **`C:\Users\Asus\Desktop\Akari-Release`**:
 * **`Akari AI Setup 1.0.0.exe`**: Windows NSIS installer that creates desktop and start menu shortcuts.
 * **`Akari AI 1.0.0.exe`**: Zero-install standalone portable executable.
+
+---
+
+## 📱 Mobile Background Voice & Detached PC Architecture
+
+### 1. Mobile Background Voice Listening Subsystem
+To allow Akari to continuously hear voice commands, process speech, and respond even when the user switches to other apps (e.g. WhatsApp, YouTube, Instagram) or locks the screen, the Android architecture includes:
+* **Native Foreground Service (`AkariBackgroundVoiceService.java`)**:
+  * Registered with `android:foregroundServiceType="microphone"`.
+  * Compliant with Android 9 through Android 15 background audio security policies.
+  * Displays an ongoing notification in the status bar so Android OS never kills the audio thread.
+  * Holds a `PowerManager.PARTIAL_WAKE_LOCK` to keep the CPU active and prevent sleep.
+* **Capacitor WebView Keep-Alive Lifecycle**:
+  * Overrides `MainActivity.onPause()` and `onStop()` to explicitly call `bridge.getWebView().onResume()` and `resumeTimers()`.
+  * Enables `setMediaPlaybackRequiresUserGesture(false)` so incoming voice responses can play immediately.
+  * Prevents Chromium Web Audio contexts, microphone streams, and WebSocket pipelines from suspending when switching apps.
+
+### 2. Detached PC Background Execution (PowerShell Independence)
+When running on PC, closing terminal windows or PowerShell no longer kills the server:
+* **`start_akari_background.bat`**:
+  * Cleans up any stale processes on ports `3000` (Node) and `8765` (Python).
+  * Launches `wscript.exe start_background_voice_service.vbs`, running completely detached with zero console windows.
+  * Discovers and prints the PC's local network IPv4 address for mobile pairing.
+  * **Safe to Close**: The user can safely close the PowerShell or CMD window without interrupting Akari's responsiveness.
+* **`start_background.ps1`**: Native PowerShell script to launch detached background services.
+* **`stop_akari.bat`**: Single-click utility that safely stops all Akari background services on ports `3000` and `8765`.
 
 ---
 

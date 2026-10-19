@@ -47,6 +47,9 @@ start http://localhost:3000
 echo.
 echo Note: The Python agent and Node server are running in the
 echo two newly opened command prompt windows.
+echo.
+echo TIP: If you want Akari to keep running silently in the background
+echo even when you close PowerShell or CMD, run: start_akari_background.bat
 echo ==========================================================
 echo.
 pause

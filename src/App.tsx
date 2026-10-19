@@ -54,7 +54,8 @@ import {
   vibrateMobile, 
   getMobileBattery, 
   setMobileVolume, 
-  showMobileToast 
+  showMobileToast,
+  ensureBackgroundVoiceService
 } from "./lib/mobileBridge";
 
 export default function App() {
@@ -103,8 +104,9 @@ export default function App() {
     stateRef.current = state;
   }, [state]);
 
-  // Clean up streaming intervals on unmount
+  // Clean up streaming intervals on unmount and ensure mobile background service is active
   useEffect(() => {
+    ensureBackgroundVoiceService();
     return () => {
       if (screenIntervalRef.current) {
         clearInterval(screenIntervalRef.current);

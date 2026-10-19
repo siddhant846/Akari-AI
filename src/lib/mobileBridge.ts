@@ -13,6 +13,8 @@ declare global {
       getBatteryStatus: () => string;
       setVolume: (percent: number) => boolean;
       showToast: (message: string) => void;
+      startVoiceService?: () => boolean;
+      stopVoiceService?: () => boolean;
     };
   }
 }
@@ -140,4 +142,18 @@ export function showMobileToast(message: string): void {
   if (isAndroidNative() && window.AndroidBridge) {
     window.AndroidBridge.showToast(message);
   }
+}
+
+export function ensureBackgroundVoiceService(): boolean {
+  if (isAndroidNative() && window.AndroidBridge?.startVoiceService) {
+    return window.AndroidBridge.startVoiceService();
+  }
+  return false;
+}
+
+export function stopBackgroundVoiceService(): boolean {
+  if (isAndroidNative() && window.AndroidBridge?.stopVoiceService) {
+    return window.AndroidBridge.stopVoiceService();
+  }
+  return false;
 }
