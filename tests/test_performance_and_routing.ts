@@ -167,7 +167,30 @@ assert(settingsPanelSrc.includes("Mobile Profile"), "Settings panel displays ded
 assert(settingsPanelSrc.includes("Desktop Profile"), "Settings panel displays dedicated Desktop Profile banner");
 
 // ---------------------------------------------------------------------------
-// 7. SUMMARY
+// 7. ANDROID PACKAGE VISIBILITY & FLAWLESS MOBILE APP LAUNCHING REGRESSION TESTS
+// ---------------------------------------------------------------------------
+console.log("\nTest Suite 7: Android Package Visibility & Flawless Mobile App Launching");
+const manifestSrc = fs.readFileSync("android/app/src/main/AndroidManifest.xml", "utf-8");
+assert(manifestSrc.includes('android.permission.QUERY_ALL_PACKAGES'), "AndroidManifest.xml includes QUERY_ALL_PACKAGES permission for Android 11+ visibility");
+assert(manifestSrc.includes('<queries>'), "AndroidManifest.xml declares <queries> block for package visibility");
+assert(manifestSrc.includes('android:name="com.whatsapp"'), "AndroidManifest.xml queries include com.whatsapp");
+assert(manifestSrc.includes('android:name="com.whatsapp.w4b"'), "AndroidManifest.xml queries include WhatsApp Business (com.whatsapp.w4b)");
+assert(manifestSrc.includes('android:scheme="whatsapp"'), "AndroidManifest.xml queries declare whatsapp scheme");
+
+const mainActivitySrc = fs.readFileSync("android/app/src/main/java/com/akari/ai/MainActivity.java", "utf-8");
+assert(mainActivitySrc.includes("queryIntentActivities"), "MainActivity.java includes dynamic launcher package search for installed apps");
+assert(mainActivitySrc.includes("com.whatsapp.w4b"), "MainActivity.java supports WhatsApp Business fallback");
+assert(mainActivitySrc.includes("whatsaap"), "MainActivity.java handles typo 'whatsaap' gracefully");
+assert(!mainActivitySrc.includes("market://details?id="), "MainActivity.java eliminates unwanted Google Play Store redirects on normal app open commands");
+assert(mainActivitySrc.includes("FLASH_INFO_AVAILABLE"), "MainActivity.java verifies FLASH_INFO_AVAILABLE across camera lenses for reliable flashlight");
+assert(mainActivitySrc.includes("VibratorManager"), "MainActivity.java supports modern VibratorManager for Android 12+");
+
+const mobileBridgeSrc = fs.readFileSync("src/lib/mobileBridge.ts", "utf-8");
+assert(mobileBridgeSrc.includes('whatsaap: "whatsapp://"'), "mobileBridge.ts includes scheme fallback for 'whatsaap'");
+assert(serverSrc.includes("NEVER search the web or Play Store when asked to open an app"), "Server prompt prohibits web/Play Store searches when asked to open apps");
+
+// ---------------------------------------------------------------------------
+// 8. SUMMARY
 // ---------------------------------------------------------------------------
 console.log("\n=======================================================");
 console.log(`TOTAL TESTS: ${passCount + failCount} | PASSED: ${passCount} | FAILED: ${failCount}`);

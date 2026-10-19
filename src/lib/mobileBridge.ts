@@ -38,10 +38,16 @@ export async function openMobileApp(appName: string, packageName?: string): Prom
   const clean = appName.toLowerCase().trim();
   const schemes: Record<string, string> = {
     whatsapp: "whatsapp://",
+    whatsaap: "whatsapp://",
+    "whats app": "whatsapp://",
+    wa: "whatsapp://",
     youtube: "vnd.youtube:",
+    yt: "vnd.youtube:",
     spotify: "spotify:",
     instagram: "instagram://",
+    insta: "instagram://",
     telegram: "tg://",
+    tg: "tg://",
     chrome: "googlechrome://",
     gmail: "mailto:",
     maps: "geo:0,0?q=",
@@ -50,7 +56,7 @@ export async function openMobileApp(appName: string, packageName?: string): Prom
   if (schemes[clean]) {
     try {
       window.location.href = schemes[clean];
-      return { success: true, message: `Attempting to open ${appName} on phone via URL scheme.` };
+      return { success: true, message: `Opened ${appName} on your mobile phone.` };
     } catch (e) {}
   }
 

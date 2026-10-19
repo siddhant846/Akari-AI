@@ -822,7 +822,7 @@ export const CODING_TOOLS: any[] = [
 export const MOBILE_TOOLS: any[] = [
   {
     name: "openMobileApp",
-    description: "Launch or open an application on the user's Android phone / mobile device (e.g. WhatsApp, YouTube, Camera, Maps, Spotify, Instagram, Telegram, Settings, Gmail, Calculator, Dialer/Phone, etc.). Use this when the user asks to open an app on their phone or is speaking from the mobile app.",
+    description: "Launch or open an application on the user's Android phone / mobile device directly without searching stores (e.g. WhatsApp, YouTube, Camera, Maps, Spotify, Instagram, Telegram, Settings, Gmail, Calculator, Dialer/Phone, etc.). Use this immediately whenever the user asks to open an app on their phone or is speaking from the mobile app.",
     parameters: {
       type: Type.OBJECT,
       properties: {

@@ -1245,7 +1245,7 @@ async function startServer() {
         "   - You have dual power to control BOTH the user's PC/Laptop AND their Android Mobile Phone!\n" +
         "   - MOBILE PHONE CONTROLS:\n" +
         "     * When the user asks for actions on their mobile phone (or says 'on my phone', 'on mobile', or is speaking from the mobile app and asks to open WhatsApp, Camera, Flashlight, Phone Settings, etc.):\n" +
-        "       -> Call 'openMobileApp({ name: \"...\" })' to launch WhatsApp, Camera, Maps, Spotify, etc. on their phone!\n" +
+        "       -> Call 'openMobileApp({ name: \"...\" })' to launch WhatsApp, Camera, Maps, Spotify, etc. directly on their phone! NEVER search the web or Play Store when asked to open an app.\n" +
         "       -> Call 'mobileTorch({ enabled: true/false })' for phone flashlight/torch!\n" +
         "       -> Call 'mobileBattery' for phone battery status!\n" +
         "       -> Call 'mobileVolume' for phone volume!\n" +
@@ -1255,8 +1255,8 @@ async function startServer() {
         "       -> Call desktop tools: 'openApplication', 'closeWindow', 'createFile', 'readScreen', etc.\n" +
         "   - CONTEXTUAL TARGETING:\n" +
         "     * If the user says 'close WhatsApp', that is a desktop window action -> close it on PC!\n" +
-        "     * If the user says 'open WhatsApp' while connected from their phone -> open it on their phone via 'openMobileApp'!\n" +
-        "     * Always clearly mention the target device in your spoken response (e.g. 'Opened WhatsApp on your phone!' or 'Closed WhatsApp on your PC!').\n";
+        "     * If the user says 'open WhatsApp' while connected from their phone -> open it on their phone directly via 'openMobileApp({ name: \"whatsapp\" })'!\n" +
+        "     * Always clearly mention the target device in your spoken response (e.g. 'Opening WhatsApp on your phone!' or 'Closed WhatsApp on your PC!').\n";
 
       // Append specialized task instructions on demand (websites, slides, news, google)
       baseInstructions += getTaskInstructions(activeCategories, activeCustomPrompt);

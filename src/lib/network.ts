@@ -7,6 +7,7 @@ export function isMobileApp(): boolean {
   if (typeof window === "undefined") return false;
   return Boolean(
     (window as any).Capacitor !== undefined ||
+    (window as any).AndroidBridge !== undefined ||
     window.location.protocol === "capacitor:" ||
     (window.location.protocol === "https:" && window.location.hostname === "localhost" && !window.location.port)
   );
