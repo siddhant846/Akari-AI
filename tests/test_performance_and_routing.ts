@@ -152,7 +152,22 @@ const taskInstructionsSrc = fs.readFileSync("server_task_instructions.ts", "utf-
 assert(taskInstructionsSrc.includes("ZERO WAITING / IMMEDIATE VERBAL ACKNOWLEDGEMENT"), "Task instructions mandate immediate verbal spoken acknowledgement for news");
 
 // ---------------------------------------------------------------------------
-// 5. SUMMARY
+// 6. DEVICE-ISOLATED PROFILES (MOBILE VS DESKTOP) REGRESSION TESTS
+// ---------------------------------------------------------------------------
+console.log("\nTest Suite 6: Device-Isolated Profiles (Mobile vs Desktop Independence)");
+const settingsStoreSrc = fs.readFileSync("src/lib/settingsStore.ts", "utf-8");
+assert(settingsStoreSrc.includes("akari.settings.mobile.v3"), "Mobile storage key (akari.settings.mobile.v3) present in settingsStore");
+assert(settingsStoreSrc.includes("akari.settings.desktop.v3"), "Desktop storage key (akari.settings.desktop.v3) present in settingsStore");
+assert(settingsStoreSrc.includes("getDevicePlatform"), "getDevicePlatform helper function exported in settingsStore");
+assert(serverSrc.includes("settings.mobile.json"), "Server isolates mobile settings in settings.mobile.json");
+assert(serverSrc.includes("settings.desktop.json"), "Server isolates desktop settings in settings.desktop.json");
+assert(serverSrc.includes("loadSettingsFile(clientPlatform)"), "WebSocket live handler loads platform-specific profile for connected device");
+const settingsPanelSrc = fs.readFileSync("src/components/SettingsPanel.tsx", "utf-8");
+assert(settingsPanelSrc.includes("Mobile Profile"), "Settings panel displays dedicated Mobile Profile banner");
+assert(settingsPanelSrc.includes("Desktop Profile"), "Settings panel displays dedicated Desktop Profile banner");
+
+// ---------------------------------------------------------------------------
+// 7. SUMMARY
 // ---------------------------------------------------------------------------
 console.log("\n=======================================================");
 console.log(`TOTAL TESTS: ${passCount + failCount} | PASSED: ${passCount} | FAILED: ${failCount}`);

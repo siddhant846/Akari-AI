@@ -402,24 +402,46 @@ async function startServer() {
   // V2: Settings API — mirrors the memory persistence pattern.
   // Reads/writes settings.json so the Python agent can also check auto-start.
   // ---------------------------------------------------------------------------
-  const SETTINGS_FILE = dataFile("settings.json");
+  const SETTINGS_DESKTOP_FILE = dataFile("settings.desktop.json");
+  const SETTINGS_MOBILE_FILE = dataFile("settings.mobile.json");
+  const SETTINGS_LEGACY_FILE = dataFile("settings.json");
 
-  function loadSettingsFile(): Record<string, unknown> {
+  function getSettingsPath(platform: string = "desktop"): string {
+    const norm = (platform || "desktop").toLowerCase().trim();
+    if (norm === "mobile" || norm === "android") {
+      return SETTINGS_MOBILE_FILE;
+    }
+    return SETTINGS_DESKTOP_FILE;
+  }
+
+  function loadSettingsFile(platform: string = "desktop"): Record<string, unknown> {
     try {
-      if (fs.existsSync(SETTINGS_FILE)) {
-        return JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf-8"));
+      const targetFile = getSettingsPath(platform);
+      if (fs.existsSync(targetFile)) {
+        return JSON.parse(fs.readFileSync(targetFile, "utf-8"));
+      }
+      // For desktop, fallback to legacy settings.json if present
+      if (platform !== "mobile" && fs.existsSync(SETTINGS_LEGACY_FILE)) {
+        return JSON.parse(fs.readFileSync(SETTINGS_LEGACY_FILE, "utf-8"));
       }
     } catch { /* corrupt file — return defaults */ }
     return {};
   }
 
-  function saveSettingsFile(data: Record<string, unknown>): void {
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 2), "utf-8");
+  function saveSettingsFile(platform: string = "desktop", data: Record<string, unknown>): void {
+    const targetFile = getSettingsPath(platform);
+    fs.writeFileSync(targetFile, JSON.stringify(data, null, 2), "utf-8");
+    if (platform !== "mobile") {
+      try {
+        fs.writeFileSync(SETTINGS_LEGACY_FILE, JSON.stringify(data, null, 2), "utf-8");
+      } catch {}
+    }
   }
 
-  app.get("/api/settings", async (_req, res) => {
+  app.get("/api/settings", async (req, res) => {
     try {
-      res.json(loadSettingsFile());
+      const platform = String(req.query.platform || "desktop");
+      res.json(loadSettingsFile(platform));
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -431,18 +453,19 @@ async function startServer() {
       if (!patch || typeof patch !== "object") {
         return res.status(400).json({ error: "Request body must be a JSON object." });
       }
-      const current = loadSettingsFile();
+      const platform = String(req.query.platform || patch.platform || "desktop");
+      const current = loadSettingsFile(platform);
       const next = { ...current, ...patch };
-      saveSettingsFile(next);
+      saveSettingsFile(platform, next);
 
-      // If auto-start toggled, relay to the desktop agent so the registry key
+      // If auto-start toggled on desktop, relay to the desktop agent so the registry key
       // is flipped immediately (don't wait for a voice command).
-      if ("autoStart" in patch) {
+      if (platform !== "mobile" && "autoStart" in patch) {
         callDesktopAgent(patch.autoStart ? "enableAutoStart" : "disableAutoStart", {})
           .catch(() => {});
       }
 
-      logCommand(`SETTINGS_UPDATED ${JSON.stringify(patch)}`);
+      logCommand(`SETTINGS_UPDATED [${platform}] ${JSON.stringify(patch)}`);
       res.json(next);
     } catch (e: any) {
       logError(`SETTINGS_SAVE_ERROR: ${e.message}`);
@@ -1023,7 +1046,7 @@ async function startServer() {
       language_tutor: "You are Akari Sensei, an encouraging and patient multilingual language tutor. When the user speaks in English, Japanese, Hindi, or other languages, you converse naturally while gently pointing out vocabulary improvements, nuances, and natural phrasing.",
     };
 
-    const currentSettings = loadSettingsFile() as any;
+    const currentSettings = loadSettingsFile(clientPlatform) as any;
     const activePersona = requestedPersona || currentSettings.personaPreset || "anime_companion";
     const activeCustomPrompt = requestedCustomPrompt || currentSettings.customSystemPrompt || SERVER_PERSONA_PRESETS[activePersona] || "";
 

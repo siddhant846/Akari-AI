@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { LiveState, AkariAudioSession } from "./lib/audio";
 import { AkariCoreVisualizer, type AkariEmotion } from "./components/AkariCoreVisualizer";
-import { type AkariSettings, saveSettings, loadSettings } from "./lib/settingsStore";
+import { type AkariSettings, saveSettings, loadSettings, getDevicePlatform } from "./lib/settingsStore";
 import type { Memory, MemoryCategory } from "./lib/memoryTypes";
 import { AkariWakeWordDetector } from "./lib/wakeWord";
 import { BrowserAgent } from "./components/BrowserAgent";
@@ -1535,6 +1535,24 @@ export default function App() {
       {/* Top Right Controls - Sleek Glass Pill */}
       <div className="absolute top-6 right-6 z-40">
         <div className="flex items-center p-1.5 gap-1 rounded-full border border-white/10 bg-black/40 backdrop-blur-3xl shadow-[0_8px_32px_rgba(0,0,0,0.6)]">
+          {/* Device Profile Badge */}
+          <div
+            className={`px-2.5 py-1 rounded-full flex items-center gap-1 text-[10px] font-mono font-bold tracking-wider uppercase border select-none ${
+              getDevicePlatform() === "mobile"
+                ? "bg-emerald-950/40 text-emerald-300 border-emerald-500/40 shadow-[0_0_10px_rgba(16,185,129,0.25)]"
+                : "bg-cyan-950/40 text-cyan-300 border-cyan-500/40 shadow-[0_0_10px_rgba(6,182,212,0.25)]"
+            }`}
+            title={
+              getDevicePlatform() === "mobile"
+                ? "📱 Mobile Profile Active — Changes made here are saved exclusively to this phone."
+                : "🖥️ Desktop PC Profile Active — Changes made here are saved exclusively to this PC."
+            }
+          >
+            <span>{getDevicePlatform() === "mobile" ? "📱 MOBILE" : "🖥️ PC"}</span>
+          </div>
+
+          <div className="w-[1px] h-4 bg-white/10 mx-0.5" />
+
           {/* Persona Archetype Switcher: Akari <-> Jr. Sidd */}
           <button
             onClick={() => {
@@ -1551,8 +1569,8 @@ export default function App() {
               });
               addToast(
                 isJrSidd
-                  ? `🌸 Switched to Akari (Anime Companion & ${nextVoice} voice)`
-                  : `⚡ Switched to Jr. Sidd (Male AI Wingman & ${nextVoice} voice)`,
+                  ? `🌸 Switched to Akari on ${getDevicePlatform() === "mobile" ? "Mobile" : "Desktop"} (${nextVoice} voice)`
+                  : `⚡ Switched to Jr. Sidd on ${getDevicePlatform() === "mobile" ? "Mobile" : "Desktop"} (${nextVoice} voice)`,
                 "success"
               );
             }}

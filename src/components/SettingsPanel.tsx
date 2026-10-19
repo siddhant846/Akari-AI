@@ -31,6 +31,7 @@ import {
   AKARI_VOICES,
   JR_SIDD_VOICES,
   PERSONA_PRESETS,
+  getDevicePlatform,
 } from "../lib/settingsStore";
 import { globalVoiceBiometrics } from "../lib/voiceBiometrics";
 
@@ -516,6 +517,29 @@ export function SettingsPanel({ isOpen, onClose, settings, onChange, onVoiceChan
                     </p>
                   </div>
                 </div>
+
+                {/* Device-Isolated Profile Indicator */}
+                <div className={`mt-3.5 p-2.5 rounded-none border text-left ${
+                  getDevicePlatform() === "mobile"
+                    ? "bg-emerald-950/30 border-emerald-500/40"
+                    : "bg-cyan-950/30 border-cyan-500/40"
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <span className={`text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1.5 ${
+                      getDevicePlatform() === "mobile" ? "text-emerald-300" : "text-cyan-300"
+                    }`}>
+                      {getDevicePlatform() === "mobile" ? "📱 Mobile Profile" : "🖥️ Desktop Profile"}
+                    </span>
+                    <span className="text-[8px] font-mono px-1 py-0.2 bg-white/10 text-white uppercase font-bold">
+                      ISOLATED
+                    </span>
+                  </div>
+                  <p className="text-[9px] font-mono text-slate-400 mt-1 leading-tight">
+                    {getDevicePlatform() === "mobile"
+                      ? "Preferences saved exclusively to this phone. Never overrides Desktop PC."
+                      : "Preferences saved exclusively to this PC. Never overrides Mobile phone."}
+                  </p>
+                </div>
               </div>
 
               <div className="flex-1 overflow-y-auto p-4 space-y-2">
@@ -705,42 +729,39 @@ export function SettingsPanel({ isOpen, onClose, settings, onChange, onVoiceChan
                           <span className="w-1 h-1 bg-cyan-400 rounded-full" /> Network & Bandwidth Optimization
                         </label>
                         <ToggleRow
-                          label="Low-Bandwidth Mode (Data Saver & Weak Wi-Fi)"
-                          description="Reduces audio and visual data consumption by up to 80%, enables VAD silence suppression, and eliminates buffer lag on mobile hotspots or slow connections"
+                          label={getDevicePlatform() === "mobile" ? "Low-Bandwidth Mode (Recommended on Mobile Phone)" : "Low-Bandwidth Mode (Data Saver & Weak Wi-Fi)"}
+                          description="Reduces audio and visual data consumption by up to 80%, enables VAD silence suppression, and eliminates buffer lag on mobile networks or slow connections"
                           checked={settings.lowBandwidthMode || false}
                           onChange={(v) => onChange({ lowBandwidthMode: v })}
                         />
                       </div>
 
-                      <div className="space-y-3">
-                        <label className="block text-xs font-mono tracking-widest text-cyan-500 uppercase flex items-center gap-2">
-                          <span className="w-1 h-1 bg-cyan-400 rounded-full" /> Windows Auto-Start
-                        </label>
-                        <ToggleRow
-                          label="Silent Auto-Start on Login"
-                          description="Launch Akari silently in the background when Windows boots"
-                          checked={settings.autoStart}
-                          onChange={(v) => {
-                            onChange({ autoStart: v });
-                            void fetch("/api/settings", {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ autoStart: v }),
-                            }).catch(() => {});
-                          }}
-                        />
-                      </div>
+                      {getDevicePlatform() !== "mobile" && (
+                        <div className="space-y-3">
+                          <label className="block text-xs font-mono tracking-widest text-cyan-500 uppercase flex items-center gap-2">
+                            <span className="w-1 h-1 bg-cyan-400 rounded-full" /> Windows Auto-Start (Desktop PC Only)
+                          </label>
+                          <ToggleRow
+                            label="Silent Auto-Start on Login"
+                            description="Launch Akari silently in the background when Windows boots"
+                            checked={settings.autoStart}
+                            onChange={(v) => onChange({ autoStart: v })}
+                          />
+                        </div>
+                      )}
 
                       <div className="space-y-3">
                         <label className="block text-xs font-mono tracking-widest text-cyan-500 uppercase flex items-center gap-2">
                           <span className="w-1 h-1 bg-cyan-400 rounded-full" /> UI & Avatar Gaze
                         </label>
-                        <ToggleRow
-                          label="Interactive Mouse Gaze"
-                          description="Akari's eyes & head follow your mouse cursor"
-                          checked={settings.cursorTrackingEnabled !== false}
-                          onChange={(v) => onChange({ cursorTrackingEnabled: v })}
-                        />
+                        {getDevicePlatform() !== "mobile" && (
+                          <ToggleRow
+                            label="Interactive Mouse Gaze"
+                            description="Akari's eyes & head follow your mouse cursor"
+                            checked={settings.cursorTrackingEnabled !== false}
+                            onChange={(v) => onChange({ cursorTrackingEnabled: v })}
+                          />
+                        )}
                         <ToggleRow
                           label="Kinetic Animations"
                           description="Enable fluid UI and particle effects"

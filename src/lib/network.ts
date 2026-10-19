@@ -12,6 +12,13 @@ export function isMobileApp(): boolean {
   );
 }
 
+export function isMobileDevice(): boolean {
+  if (typeof window === "undefined") return false;
+  if (isMobileApp()) return true;
+  const ua = window.navigator?.userAgent || "";
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+}
+
 export function getServerHost(): string {
   if (typeof window === "undefined") return "192.168.1.12:3000";
   const saved = localStorage.getItem("akari_server_host");

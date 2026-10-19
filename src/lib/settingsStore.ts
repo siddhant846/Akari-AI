@@ -7,6 +7,8 @@
  * the Python desktop agent can read them too.
  */
 
+import { isMobileApp, isMobileDevice, getApiBaseUrl } from "./network";
+
 export interface PersonaPreset {
   id: string;
   name: string;
@@ -198,20 +200,56 @@ export const DEFAULT_SETTINGS: AkariSettings = {
   lowBandwidthMode: false,
 };
 
-const STORAGE_KEY = "akari.settings.v2";
+/** Mobile-tailored default settings (battery-friendly, low-bandwidth data saver, touch UI) */
+export const DEFAULT_MOBILE_SETTINGS: AkariSettings = {
+  ...DEFAULT_SETTINGS,
+  lowBandwidthMode: true,
+  cursorTrackingEnabled: false,
+  autoStart: false,
+  avatarStyle: "character",
+  voice: "Kore",
+  akariVoice: "Kore",
+  jrSiddVoice: "Fenrir",
+  personaPreset: "anime_companion",
+};
+
+const LEGACY_STORAGE_KEY = "akari.settings.v2";
+
+/** Returns whether the current runtime environment is Mobile ('mobile') or Desktop PC ('desktop') */
+export function getDevicePlatform(): "mobile" | "desktop" {
+  if (typeof window === "undefined") return "desktop";
+  if (isMobileDevice()) return "mobile";
+  return "desktop";
+}
+
+/** Distinct storage key ensuring mobile and desktop settings are completely isolated */
+export function getStorageKey(): string {
+  return getDevicePlatform() === "mobile" ? "akari.settings.mobile.v3" : "akari.settings.desktop.v3";
+}
 
 /** Settings keys that the browser should never persist (security). */
 const NEVER_PERSIST: ReadonlySet<keyof AkariSettings> = new Set([]);
 
 /**
- * Load settings from localStorage, merged over defaults so new keys always
- * have a sane value even when an older payload is present.
+ * Load settings from localStorage with device isolation.
+ * Changes made on mobile are stored in akari.settings.mobile.v3 and NEVER overwrite desktop PC.
+ * Changes made on desktop are stored in akari.settings.desktop.v3 and NEVER overwrite mobile phone.
  */
 export function loadSettings(): AkariSettings {
-  if (typeof window === "undefined") return { ...DEFAULT_SETTINGS };
+  const isMobile = getDevicePlatform() === "mobile";
+  const baseDefaults = isMobile ? DEFAULT_MOBILE_SETTINGS : DEFAULT_SETTINGS;
+  if (typeof window === "undefined") return { ...baseDefaults };
+
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...DEFAULT_SETTINGS };
+    const key = getStorageKey();
+    let raw = window.localStorage.getItem(key);
+
+    // Initial migration: if device-specific key is not set yet, check legacy storage key once
+    if (!raw) {
+      raw = window.localStorage.getItem(LEGACY_STORAGE_KEY);
+    }
+
+    if (!raw) return { ...baseDefaults };
     const parsed = JSON.parse(raw) as Partial<AkariSettings>;
     
     // Strict Voice Separation
@@ -227,7 +265,7 @@ export function loadSettings(): AkariSettings {
 
     // Default to character model if vts is not actively used
     if (!parsed.avatarStyle) {
-      parsed.avatarStyle = "character";
+      parsed.avatarStyle = isMobile ? "character" : "character";
     }
 
     // Dynamically assign active voice strictly according to active avatarStyle
@@ -238,7 +276,7 @@ export function loadSettings(): AkariSettings {
     }
 
     if (parsed.cursorTrackingEnabled === undefined) {
-      parsed.cursorTrackingEnabled = true;
+      parsed.cursorTrackingEnabled = !isMobile;
     }
     if (parsed.personaPreset === undefined) {
       parsed.personaPreset = "anime_companion";
@@ -252,14 +290,17 @@ export function loadSettings(): AkariSettings {
     if (!parsed.proactiveIntervalMinutes) {
       parsed.proactiveIntervalMinutes = 5;
     }
-    return { ...DEFAULT_SETTINGS, ...parsed };
+    if (parsed.lowBandwidthMode === undefined) {
+      parsed.lowBandwidthMode = isMobile;
+    }
+    return { ...baseDefaults, ...parsed };
   } catch {
-    return { ...DEFAULT_SETTINGS };
+    return { ...baseDefaults };
   }
 }
 
 /**
- * Persist a full or partial settings update to localStorage.
+ * Persist a full or partial settings update to device-isolated localStorage.
  * Returns the fully merged settings object.
  */
 export function saveSettings(patch: Partial<AkariSettings>): AkariSettings {
@@ -301,28 +342,31 @@ export function saveSettings(patch: Partial<AkariSettings>): AkariSettings {
 
   if (typeof window !== "undefined") {
     try {
+      const key = getStorageKey();
       // Strip any sensitive keys before writing to localStorage.
       const safe: Record<string, unknown> = {};
       (Object.keys(next) as (keyof AkariSettings)[]).forEach((k) => {
         if (!NEVER_PERSIST.has(k)) safe[k] = next[k];
       });
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(safe));
+      window.localStorage.setItem(key, JSON.stringify(safe));
     } catch {
       /* localStorage may be unavailable (private mode) - fail silently. */
     }
   }
-  // Best-effort sync to backend so the Python agent can read auto-start state.
+  // Best-effort device-isolated sync to backend
   void syncSettingsToBackend(next).catch(() => {});
   return next;
 }
 
-/** Push settings to the backend (server.ts persists to settings.json). */
+/** Push device-specific settings to backend (persisted to settings.mobile.json or settings.desktop.json) */
 async function syncSettingsToBackend(settings: AkariSettings): Promise<void> {
   try {
-    await fetch("/api/settings", {
+    const platform = getDevicePlatform();
+    const apiBase = getApiBaseUrl();
+    await fetch(`${apiBase}/api/settings?platform=${platform}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(settings),
+      body: JSON.stringify({ ...settings, platform }),
     });
   } catch {
     /* Backend may be briefly unavailable during boot - non-fatal. */
