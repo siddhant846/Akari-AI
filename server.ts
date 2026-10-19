@@ -1007,6 +1007,7 @@ async function startServer() {
     const speakerRecognition = reqUrl.searchParams.get("speakerRecognition") !== "false";
     const requestedPersona = reqUrl.searchParams.get("personaPreset") || "";
     const requestedCustomPrompt = reqUrl.searchParams.get("customSystemPrompt") || "";
+    const requestedCategory = reqUrl.searchParams.get("category") || reqUrl.searchParams.get("categories") || "";
     const clientPlatform = (reqUrl.searchParams.get("platform") || "desktop").toLowerCase();
     const activeCategories = requestedCategory
       ? requestedCategory.split(",").map(c => c.trim().toLowerCase())
