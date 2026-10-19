@@ -16,6 +16,29 @@ import { getWsBaseUrl } from "./network";
 
 export type LiveState = "disconnected" | "connecting" | "listening" | "speaking";
 
+// High-quality decimation downsampler for microphone audio (e.g. 48kHz / 44.1kHz -> 16kHz)
+function downsampleTo16k(input: Float32Array, inputSampleRate: number): Float32Array {
+  if (!inputSampleRate || inputSampleRate === 16000) return input;
+  const ratio = inputSampleRate / 16000;
+  const outputLength = Math.round(input.length / ratio);
+  const result = new Float32Array(outputLength);
+  let offsetResult = 0;
+  let offsetInput = 0;
+  while (offsetResult < outputLength) {
+    const nextOffsetInput = Math.round((offsetResult + 1) * ratio);
+    let accum = 0;
+    let count = 0;
+    for (let i = offsetInput; i < nextOffsetInput && i < input.length; i++) {
+      accum += input[i];
+      count++;
+    }
+    result[offsetResult] = count > 0 ? accum / count : (input[offsetInput] || 0);
+    offsetResult++;
+    offsetInput = nextOffsetInput;
+  }
+  return result;
+}
+
 // PCM Conversion Helper: converts Float32Array [-1.0, 1.0] to signed Int16 Raw PCM Little Endian
 function floatTo16BitPCM(input: Float32Array): ArrayBuffer {
   const buffer = new ArrayBuffer(input.length * 2);
@@ -326,6 +349,8 @@ export class AkariAudioSession {
         try {
           this.micStream = await navigator.mediaDevices.getUserMedia({
             audio: {
+              channelCount: 1,
+              sampleRate: { ideal: 16000 },
               echoCancellation: true,
               noiseSuppression: true,
               autoGainControl: true,
@@ -364,9 +389,10 @@ export class AkariAudioSession {
         this.micSourceNode.connect(this.inputAnalyser);
       }
 
-      // Setup mic processor node (512 buffer = ~32ms latency)
+      // Setup mic processor node (1024 buffer on 48k/44.1k, 512 on 16k)
       if (!this.micProcessorNode) {
-        this.micProcessorNode = this.inputAudioCtx.createScriptProcessor(512, 1, 1);
+        const bufferSize = this.inputAudioCtx.sampleRate >= 32000 ? 1024 : 512;
+        this.micProcessorNode = this.inputAudioCtx.createScriptProcessor(bufferSize, 1, 1);
         this.micSourceNode.connect(this.micProcessorNode);
         this.micProcessorNode.connect(this.inputAudioCtx.destination);
       }
@@ -374,7 +400,10 @@ export class AkariAudioSession {
       this.micProcessorNode.onaudioprocess = (e) => {
         if (this.currentState === "disconnected" || this.currentState === "connecting") return;
 
-        const channelData = e.inputBuffer.getChannelData(0);
+        const rawChannelData = e.inputBuffer.getChannelData(0);
+        const actualSampleRate = e.inputBuffer.sampleRate || this.inputAudioCtx?.sampleRate || 16000;
+        // Cleanly downsample hardware audio (48kHz / 44.1kHz) to exact 16kHz for Gemini Live
+        const channelData = actualSampleRate !== 16000 ? downsampleTo16k(rawChannelData, actualSampleRate) : rawChannelData;
 
         // Compute frame RMS for noise gating and speaker bleed protection
         let sumSquares = 0;
@@ -388,15 +417,6 @@ export class AkariAudioSession {
         const isEchoCoolingDown = now < this.echoSuppressionUntil;
 
         // Acoustic Feedback Shield & Barge-In Protection:
-        // When Akari is speaking or room reverb is settling, room speakers bleed sound into the microphone.
-        // If this bleed audio is streamed to Gemini Live, Gemini's server-side VAD interprets its own voice
-        // as an interruption, instantly cutting off Akari's speech mid-sentence.
-        // Furthermore, Gemini transcribes this echo as a "userTurn" and repeats the same statement back.
-        //
-        // Solution:
-        // 1. Strictly block microphone streaming while Akari is speaking or during echo cooldown.
-        // 2. Permit intentional user barge-in ONLY if the user deliberately speaks loudly over Akari (RMS >= 0.22)
-        //    sustained for at least 8 consecutive frames (~250ms).
         if (isModelSpeaking || isEchoCoolingDown) {
           if (rms >= 0.22 && isModelSpeaking) {
             this.bargeInConsecutiveFrames++;
@@ -407,7 +427,7 @@ export class AkariAudioSession {
               if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({ type: "interrupted" }));
               }
-              this.echoSuppressionUntil = Date.now() + 250;
+              this.echoSuppressionUntil = Date.now() + 120;
             }
           } else {
             this.bargeInConsecutiveFrames = 0;
@@ -421,12 +441,12 @@ export class AkariAudioSession {
         // Adaptively track ambient noise floor during non-speech / quiet periods
         if (!this.isUserTalking || rms < this.ambientNoiseFloor * 1.5) {
           this.ambientNoiseFloor = this.ambientNoiseFloor * 0.96 + rms * 0.04;
-          this.ambientNoiseFloor = Math.max(0.005, Math.min(0.050, this.ambientNoiseFloor));
+          this.ambientNoiseFloor = Math.max(0.003, Math.min(0.035, this.ambientNoiseFloor));
         }
 
-        // Dynamic dual-threshold VAD: adapts to room tone, AC, and fan noise
-        const speechStartThreshold = Math.max(0.020, this.ambientNoiseFloor * 2.2);
-        const silenceThreshold = Math.max(0.012, this.ambientNoiseFloor * 1.4);
+        // Dynamic dual-threshold VAD: sensitive, natural human hearing
+        const speechStartThreshold = Math.max(0.008, this.ambientNoiseFloor * 1.35);
+        const silenceThreshold = Math.max(0.005, this.ambientNoiseFloor * 1.10);
 
         if (rms >= speechStartThreshold) {
           this.lastSpeechTimestamp = now;
@@ -442,8 +462,8 @@ export class AkariAudioSession {
           const silenceElapsed = this.silenceStartTimestamp ? (now - this.silenceStartTimestamp) : 0;
           const timeSinceSpeech = now - this.lastSpeechTimestamp;
 
-          // Hard guarantee: triggers after 200ms silence or max 350ms since last active speech packet
-          if (silenceElapsed >= 200 || timeSinceSpeech >= 350) {
+          // Instant trigger: triggers after 180ms silence or max 300ms since last active speech packet
+          if (silenceElapsed >= 180 || timeSinceSpeech >= 300) {
             const vadLatency = now - this.lastSpeechTimestamp;
             this.isUserTalking = false;
             this.silenceStartTimestamp = 0;
@@ -562,6 +582,8 @@ export class AkariAudioSession {
       try {
         this.micStream = await navigator.mediaDevices.getUserMedia({
           audio: {
+            channelCount: 1,
+            sampleRate: { ideal: 16000 },
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
@@ -699,12 +721,12 @@ export class AkariAudioSession {
           this.firstAudioChunkReceivedTime = 0;
           this.hasReportedPlaybackThisTurn = false;
           if (this.activeSources.length === 0 && this.currentState === "speaking") {
-            this.echoSuppressionUntil = Date.now() + 450;
+            this.echoSuppressionUntil = Date.now() + 120;
             setTimeout(() => {
               if (this.activeSources.length === 0 && this.currentState === "speaking" && this.isModelTurnComplete) {
                 this.setState("listening");
               }
-            }, 400);
+            }, 100);
           }
         }
 
@@ -849,7 +871,7 @@ export class AkariAudioSession {
   public interrupt(): void {
     if (this.currentState === "speaking" || this.activeSources.length > 0) {
       this.handleInterruption();
-      this.echoSuppressionUntil = Date.now() + 250;
+      this.echoSuppressionUntil = Date.now() + 120;
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         this.ws.send(JSON.stringify({ type: "interrupted" }));
       }
@@ -917,8 +939,8 @@ export class AkariAudioSession {
         }
 
         if (this.activeSources.length === 0) {
-          // Keep mic shielded for 500ms after audio buffers finish physical output
-          this.echoSuppressionUntil = Date.now() + 500;
+          // Keep mic shielded for 120ms after audio buffers finish physical output to absorb acoustic room reflection
+          this.echoSuppressionUntil = Date.now() + 120;
           if (this.speechEndTimer) clearTimeout(this.speechEndTimer);
 
           if (this.isModelTurnComplete) {
@@ -927,7 +949,7 @@ export class AkariAudioSession {
               if (this.activeSources.length === 0 && this.currentState === "speaking" && this.isModelTurnComplete) {
                 this.setState("listening");
               }
-            }, 450);
+            }, 100);
           } else {
             // Model turn has NOT completed yet; more chunks may be on the way over the network.
             // Generous fallback safety timeout (3500ms) prevents network jitter pauses from prematurely cutting off speech.

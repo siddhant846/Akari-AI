@@ -30,6 +30,13 @@ export const SLIDES_PRESENTATION_INSTRUCTIONS = `
 
 export const NEWS_BRIEFING_INSTRUCTIONS = `
 ### WEATHER, NEWS & BRIEFINGS PROTOCOL
+- ZERO WAITING / IMMEDIATE VERBAL ACKNOWLEDGEMENT:
+  * When the user asks about today's news, weather, or current events, NEVER keep them waiting in dead silence while calling search tools!
+  * You MUST speak an immediate, natural, warm verbal acknowledgement aloud in your real voice FIRST before or while calling the tool.
+  * For news: say "Ohh, you wanna know today's news? Okay wait, let me check what's going on in the world!" (or similar spontaneous conversational phrasing).
+  * For weather: say "Let me check the weather for you right now!"
+  * For general lookups: say "Oh, let me look that up for you right now!"
+  * THEN fetch the data and deliver the answer. Zero dead air!
 - WEATHER: Use 'getWeather' with location when asked about weather.
 - NEWS: Use 'getNews' when asked for news or briefings.
 - BRIEFING FORMAT: Read top 5 headlines in ONE LINE EACH (e.g. '1. [Headline] - reported by Reuters'), then ask: 'Which one would you like me to dive into?'
@@ -58,13 +65,13 @@ export function getTaskInstructions(categories: string[], promptText: string = "
   let extra = "";
 
   if (catSet.has("coding") || /website|build\s*site|webpage|landing\s*page|framer/i.test(lower)) {
-    if (/website|landing\s*page|webpage/i.test(lower)) {
+    if (catSet.has("coding") || /website|landing\s*page|webpage/i.test(lower)) {
       extra += WEBSITE_BUILDER_INSTRUCTIONS + "\n";
     }
-    if (/presentation|powerpoint|slides|ppt|deck|excel|spreadsheet/i.test(lower)) {
+    if (catSet.has("coding") || /presentation|powerpoint|slides|ppt|deck|excel|spreadsheet/i.test(lower)) {
       extra += SLIDES_PRESENTATION_INSTRUCTIONS + "\n";
     }
-    if (/chart|dataset|csv|analyze\s*data|correlation/i.test(lower)) {
+    if (catSet.has("coding") || /chart|dataset|csv|analyze\s*data|correlation/i.test(lower)) {
       extra += DATA_ANALYTICS_INSTRUCTIONS + "\n";
     }
   }
@@ -73,7 +80,7 @@ export function getTaskInstructions(categories: string[], promptText: string = "
     extra += GOOGLE_WORKSPACE_INSTRUCTIONS + "\n";
   }
 
-  if (catSet.has("search") && /news|headline|briefing|weather/i.test(lower)) {
+  if (catSet.has("search") || /news|headline|briefing|weather/i.test(lower)) {
     extra += NEWS_BRIEFING_INSTRUCTIONS + "\n";
   }
 

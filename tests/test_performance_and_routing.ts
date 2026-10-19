@@ -127,15 +127,27 @@ assert(serverSrc.includes("session.sendClientContent({ turnComplete: true })"), 
 
 const audioSrc = fs.readFileSync("src/lib/audio.ts", "utf-8");
 assert(audioSrc.includes("ambientNoiseFloor"), "Adaptive noise floor tracking present in audio.ts");
-assert(audioSrc.includes("silenceElapsed >= 200 || timeSinceSpeech >= 350"), "Client VAD cutoff guarantee prevents ambient noise hangs");
+assert(audioSrc.includes("silenceElapsed >= 180 || timeSinceSpeech >= 300"), "Client VAD cutoff guarantee (180ms) prevents ambient noise hangs and triggers response instantly");
 assert(audioSrc.includes('endOfTurn: true'), "Client sends endOfTurn signal immediately upon silence");
 assert(audioSrc.includes("initialPreRoll = this.lowBandwidthMode ? 0.025 : 0.010"), "Client playback pre-roll optimized to 10ms");
+assert(audioSrc.includes("downsampleTo16k"), "Client downsamples 44.1kHz/48kHz microphone streams to exact 16kHz PCM for crystal clear speech recognition");
+assert(audioSrc.includes("sampleRate: { ideal: 16000 }"), "Microphone constraints request ideal 16000 Hz capture");
+assert(audioSrc.includes("this.echoSuppressionUntil = Date.now() + 120;"), "Post-speech echo suppression reduced to 120ms so Akari is never deaf when user speaks immediately");
 
 const routingSrc = fs.readFileSync("server_tools_routing.ts", "utf-8");
 assert(!routingSrc.includes("verifySpeakerVoice"), "verifySpeakerVoice tool eliminated from core tools to stop latency spikes");
 assert(!routingSrc.includes("expressInnerThought"), "expressInnerThought eliminated from core tools to prevent speech delays");
 assert(!serverSrc.includes("One moment, checking that"), "Robotic filler line directive removed from system prompt");
 assert(!audioSrc.includes("filler_line"), "Robotic speechSynthesis filler voice removed from client audio");
+
+// ---------------------------------------------------------------------------
+// 5. ZERO-WAITING VERBAL ACKNOWLEDGEMENTS REGRESSION TESTS
+// ---------------------------------------------------------------------------
+console.log("\nTest Suite 5: Zero-Waiting Immediate Verbal Acknowledgements for News & Search");
+assert(serverSrc.includes("ZERO WAITING & IMMEDIATE SPOKEN ACKNOWLEDGEMENTS FOR SEARCHES & TOOLS"), "Server prompt mandates immediate verbal spoken acknowledgement before searching/tools");
+assert(serverSrc.includes("Ohh, you wanna know today's news? Okay wait, let me check what's going on in the world!"), "Server prompt includes conversational acknowledgement example for news");
+const taskInstructionsSrc = fs.readFileSync("server_task_instructions.ts", "utf-8");
+assert(taskInstructionsSrc.includes("ZERO WAITING / IMMEDIATE VERBAL ACKNOWLEDGEMENT"), "Task instructions mandate immediate verbal spoken acknowledgement for news");
 
 // ---------------------------------------------------------------------------
 // 5. SUMMARY
