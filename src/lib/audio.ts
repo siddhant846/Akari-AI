@@ -11,8 +11,7 @@
  */
 
 import { getVTubeStudioClient } from "./vtsClient";
-import { globalVoiceBiometrics, SpeakerIdentificationResult } from "./voiceBiometrics";
-import { getWsBaseUrl } from "./network";
+import { getWsBaseUrl, isMobileApp } from "./network";
 
 export type LiveState = "disconnected" | "connecting" | "listening" | "speaking";
 
@@ -634,6 +633,7 @@ export class AkariAudioSession {
     if (this.lastSpeakerRecognition !== undefined) params.set("speakerRecognition", String(this.lastSpeakerRecognition));
     if (this.lastPersonaPreset) params.set("personaPreset", this.lastPersonaPreset);
     if (this.lastCustomSystemPrompt) params.set("customSystemPrompt", this.lastCustomSystemPrompt);
+    params.set("platform", isMobileApp() ? "mobile" : "desktop");
     const queryStr = params.toString() ? `?${params.toString()}` : "";
 
     const wsBase = getWsBaseUrl();

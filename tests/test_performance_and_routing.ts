@@ -51,6 +51,8 @@ assert(defaultNames.has("searchWeb"), "Search tool present in default set (searc
 assert(defaultNames.has("createPythonFile"), "Coding tool present in default set (createPythonFile)");
 assert(defaultNames.has("volumeUp"), "Core tool present in default set (volumeUp)");
 assert(defaultNames.has("saveCustomMemory"), "Core tool present in default set (saveCustomMemory)");
+assert(defaultNames.has("openMobileApp"), "Mobile tool present in default set (openMobileApp)");
+assert(defaultNames.has("mobileTorch"), "Mobile tool present in default set (mobileTorch)");
 
 // Selective category routing
 const browserOnly = getRoutedToolDeclarations(["browser"]);

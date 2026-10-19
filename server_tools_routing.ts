@@ -1,6 +1,6 @@
 import { Type } from "@google/genai";
 
-export type ToolCategory = "browser" | "files" | "system" | "google" | "search" | "coding";
+export type ToolCategory = "browser" | "files" | "system" | "google" | "search" | "coding" | "mobile";
 
 export const CORE_TOOLS: any[] = [
   {
@@ -819,6 +819,76 @@ export const CODING_TOOLS: any[] = [
                 },
 ];
 
+export const MOBILE_TOOLS: any[] = [
+  {
+    name: "openMobileApp",
+    description: "Launch or open an application on the user's Android phone / mobile device (e.g. WhatsApp, YouTube, Camera, Maps, Spotify, Instagram, Telegram, Settings, Gmail, Calculator, Dialer/Phone, etc.). Use this when the user asks to open an app on their phone or is speaking from the mobile app.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        name: {
+          type: Type.STRING,
+          description: "Friendly name of the mobile application (e.g. 'whatsapp', 'camera', 'youtube', 'maps', 'spotify', 'settings', 'calculator', 'phone', 'instagram')."
+        },
+        package_name: {
+          type: Type.STRING,
+          description: "Optional exact Android package identifier (e.g. 'com.whatsapp', 'com.google.android.youtube')."
+        }
+      },
+      required: ["name"]
+    }
+  },
+  {
+    name: "mobileTorch",
+    description: "Turn the mobile phone's flashlight / torch on or off. Use when the user asks to turn on/off flashlight on their phone.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        enabled: {
+          type: Type.BOOLEAN,
+          description: "True to turn the flashlight on, false to turn it off."
+        }
+      },
+      required: ["enabled"]
+    }
+  },
+  {
+    name: "mobileVibrate",
+    description: "Vibrate the mobile phone with a tactile haptic pulse.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        durationMs: {
+          type: Type.NUMBER,
+          description: "Duration of vibration in milliseconds (default 200)."
+        }
+      }
+    }
+  },
+  {
+    name: "mobileBattery",
+    description: "Check the mobile phone's current battery percentage and charging status.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {}
+    }
+  },
+  {
+    name: "mobileVolume",
+    description: "Adjust the mobile phone's media volume level (0 to 100).",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        volume: {
+          type: Type.NUMBER,
+          description: "Volume percentage from 0 to 100."
+        }
+      },
+      required: ["volume"]
+    }
+  }
+];
+
 export const CATEGORY_MAP: Record<string, any[]> = {
   core: CORE_TOOLS,
   browser: BROWSER_TOOLS,
@@ -827,12 +897,13 @@ export const CATEGORY_MAP: Record<string, any[]> = {
   google: GOOGLE_TOOLS,
   search: SEARCH_TOOLS,
   coding: CODING_TOOLS,
+  mobile: MOBILE_TOOLS,
 };
 
 /**
  * Returns routed tool declarations for Gemini Live.
  * Always includes the small CORE set, plus only the specified relevant categories.
- * Default: CORE + system + search (~25 tools instead of 116).
+ * Default: CORE + system + search + mobile (~30 tools instead of 116).
  */
 export function getRoutedToolDeclarations(categories?: string[] | null): any[] {
   const selected = new Map<string, any>();
@@ -842,7 +913,7 @@ export function getRoutedToolDeclarations(categories?: string[] | null): any[] {
     selected.set(t.name, t);
   }
 
-  const ALL_CATEGORIES = ["browser", "files", "system", "google", "search", "coding"];
+  const ALL_CATEGORIES = ["browser", "files", "system", "google", "search", "coding", "mobile"];
   const requested = categories && categories.length > 0
     ? (categories.includes("all") ? ALL_CATEGORIES : categories.map(c => c.toLowerCase().trim()))
     : ALL_CATEGORIES;

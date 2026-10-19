@@ -1007,10 +1007,10 @@ async function startServer() {
     const speakerRecognition = reqUrl.searchParams.get("speakerRecognition") !== "false";
     const requestedPersona = reqUrl.searchParams.get("personaPreset") || "";
     const requestedCustomPrompt = reqUrl.searchParams.get("customSystemPrompt") || "";
-    const requestedCategory = reqUrl.searchParams.get("category") || reqUrl.searchParams.get("categories") || "";
+    const clientPlatform = (reqUrl.searchParams.get("platform") || "desktop").toLowerCase();
     const activeCategories = requestedCategory
       ? requestedCategory.split(",").map(c => c.trim().toLowerCase())
-      : ["browser", "files", "system", "google", "search", "coding"];
+      : ["browser", "files", "system", "google", "search", "coding", "mobile"];
 
     // Persona Preset Definitions
     const SERVER_PERSONA_PRESETS: Record<string, string> = {
@@ -1215,7 +1215,24 @@ async function startServer() {
         "   - After building a website, running scripts, or completing any task, Akari MUST ALWAYS REMAIN FULLY AWAKE, ACTIVE, AND VISIBLE ON SCREEN. NEVER close, exit, sleep, minimize, or turn off after completing a task. NEVER call 'shutdownAkari', 'closeWindow', or 'minimizeWindow' on yourself.\n" +
         "18. ZERO REPETITION DIRECTIVE:\n" +
         "   - NEVER repeat your own previous statement, and NEVER echo back the exact words the user just said.\n" +
-        "   - If the user's input sounds identical or similar to what you just said (e.g. from acoustic room echo), DO NOT repeat yourself. Smoothly continue forward or ask what they need next.\n";
+        "   - If the user's input sounds identical or similar to what you just said (e.g. from acoustic room echo), DO NOT repeat yourself. Smoothly continue forward or ask what they need next.\n" +
+        "19. MULTI-DEVICE INTELLIGENCE (PC / LAPTOP AND MOBILE PHONE DUAL CONTROL):\n" +
+        `   - CURRENT CONNECTED CLIENT DEVICE: ${clientPlatform === "mobile" ? "ANDROID MOBILE PHONE (APK)" : "DESKTOP PC / LAPTOP"}.\n` +
+        "   - You have dual power to control BOTH the user's PC/Laptop AND their Android Mobile Phone!\n" +
+        "   - MOBILE PHONE CONTROLS:\n" +
+        "     * When the user asks for actions on their mobile phone (or says 'on my phone', 'on mobile', or is speaking from the mobile app and asks to open WhatsApp, Camera, Flashlight, Phone Settings, etc.):\n" +
+        "       -> Call 'openMobileApp({ name: \"...\" })' to launch WhatsApp, Camera, Maps, Spotify, etc. on their phone!\n" +
+        "       -> Call 'mobileTorch({ enabled: true/false })' for phone flashlight/torch!\n" +
+        "       -> Call 'mobileBattery' for phone battery status!\n" +
+        "       -> Call 'mobileVolume' for phone volume!\n" +
+        "       -> Call 'mobileVibrate' for phone vibration!\n" +
+        "   - PC / LAPTOP CONTROLS:\n" +
+        "     * When the user asks to control their PC/laptop (or says 'on my PC', 'on my computer', 'on laptop', or commands desktop actions like closing windows, PowerPoint, coding, PowerShell, system monitoring, file operations):\n" +
+        "       -> Call desktop tools: 'openApplication', 'closeWindow', 'createFile', 'readScreen', etc.\n" +
+        "   - CONTEXTUAL TARGETING:\n" +
+        "     * If the user says 'close WhatsApp', that is a desktop window action -> close it on PC!\n" +
+        "     * If the user says 'open WhatsApp' while connected from their phone -> open it on their phone via 'openMobileApp'!\n" +
+        "     * Always clearly mention the target device in your spoken response (e.g. 'Opened WhatsApp on your phone!' or 'Closed WhatsApp on your PC!').\n";
 
       // Append specialized task instructions on demand (websites, slides, news, google)
       baseInstructions += getTaskInstructions(activeCategories, activeCustomPrompt);

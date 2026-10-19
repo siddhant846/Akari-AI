@@ -48,6 +48,14 @@ import { proactiveVision } from "./lib/proactiveVision";
 import { FloatingCompanion } from "./components/FloatingCompanion";
 import { openDesktopPetOverlay, closeDesktopPetOverlay, getPipContainer } from "./lib/desktopPet";
 import { detectUserEmotion, type UserEmotion } from "./lib/emotionDetector";
+import { 
+  openMobileApp, 
+  toggleMobileTorch, 
+  vibrateMobile, 
+  getMobileBattery, 
+  setMobileVolume, 
+  showMobileToast 
+} from "./lib/mobileBridge";
 
 export default function App() {
   const { user, isAuthenticated, openAuthModal } = useAuth();
@@ -774,6 +782,30 @@ export default function App() {
           } else {
             callback({ error: `Unsupported color '${colorName}'. Supported themes are: ${validColors.join(", ")}` });
           }
+        } else if (name === "openMobileApp") {
+          openMobileApp(args.name, args.package_name).then((res) => {
+            showNotification(res.message, res.success ? "success" : "info");
+            callback(res);
+          });
+        } else if (name === "mobileTorch") {
+          const enable = Boolean(args.enabled);
+          toggleMobileTorch(enable).then((res) => {
+            showNotification(res.message, "info");
+            callback(res);
+          });
+        } else if (name === "mobileVibrate") {
+          const res = vibrateMobile(args.durationMs || 200);
+          callback(res);
+        } else if (name === "mobileBattery") {
+          getMobileBattery().then((res) => {
+            callback(res);
+          });
+        } else if (name === "mobileVolume") {
+          const res = setMobileVolume(args.volume ?? args.percent ?? 70);
+          callback(res);
+        } else if (name === "mobileToast") {
+          showMobileToast(String(args.message || ""));
+          callback({ result: "Toast displayed on mobile phone." });
         } else {
           callback({ error: `Tool ${name} is not implemented.` });
         }
