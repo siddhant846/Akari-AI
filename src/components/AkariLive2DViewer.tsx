@@ -123,7 +123,7 @@ export const AkariLive2DViewer: React.FC<AkariLive2DViewerProps> = ({
       height,
       backgroundAlpha: 0,
       antialias: !isMobile,
-      resolution: Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2),
+      resolution: Math.min(window.devicePixelRatio || 1, 1.25),
       autoDensity: true,
       powerPreference: "high-performance",
     });
@@ -175,7 +175,7 @@ export const AkariLive2DViewer: React.FC<AkariLive2DViewerProps> = ({
               state === "talking" ||
               (activeSession && activeSession.currentState === "speaking");
 
-            if (activeSession && activeSession.outputAnalyser) {
+            if (isSpeaking && activeSession && activeSession.outputAnalyser) {
               try {
                 activeSession.outputAnalyser.getByteFrequencyData(audioDataRef.current);
                 

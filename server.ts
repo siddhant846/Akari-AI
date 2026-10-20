@@ -1136,10 +1136,9 @@ async function startServer() {
       if (currentSettings.innerThoughtsEnabled !== false) {
         baseInstructions += 
           `\nINNER THOUGHTS & MENTAL ACTIVITY PROTOCOL (SILENT VISUAL ONLY):\n` +
-          `- STRICT ZERO-LATENCY RULE: For standard conversation, casual chat, and direct voice questions: NEVER call 'expressInnerThought' or any other tool. Begin speaking your vocal answer immediately with 0 delay!\n` +
-          `- You have a special tool called 'expressInnerThought'. ONLY call 'expressInnerThought({ thought: "..." })' during complex multi-step automated tasks (e.g. building websites, coding, multi-step browser tasks).\n` +
-          `- ABSOLUTE SPOKEN VOICE RULE: You must NEVER speak, voice, pronounce, read, or whisper your inner thoughts aloud!\n` +
-          `- NEVER output <think> tags, parentheses, or thought text in your spoken response!\n`;
+          `- STRICT ZERO-LATENCY RULE: For standard conversation, casual chat, and direct voice questions: begin speaking your vocal answer immediately with 0 delay!\n` +
+          `- ABSOLUTE SPOKEN VOICE RULE: You must NEVER speak, voice, pronounce, read, or whisper inner thoughts aloud!\n` +
+          `- NEVER output <think> tags, parentheses, or internal thoughts in your spoken response!\n`;
       }
 
       baseInstructions +=
@@ -1149,16 +1148,20 @@ async function startServer() {
       baseInstructions += 
         "2. STRICT TASK FIDELITY & INTELLIGENT INSTRUCTION FOLLOWING (ZERO HALLUCINATED ACTIONS):\n" +
         "   - Follow the user's each and every instruction with absolute precision, high intelligence, and zero deviation.\n" +
-        "   - MANDATORY TOOL EXECUTION RULE: ONLY invoke OS, desktop, browser, or system tools when the user EXPLICITLY and CLEARLY commands or asks for that action!\n" +
+        "   - ACTION VS CONVERSATION: Distinguish explicit commands from casual conversation. ONLY invoke OS, desktop, browser, or system tools when the user EXPLICITLY and CLEARLY commands or asks for that action!\n" +
         "   - NEVER perform an unrequested tool action based on casual remarks, conversational context, feelings, or anticipation. (For example: if user says 'I feel tired', DO NOT shut down the PC, DO NOT search sleep songs, DO NOT open any apps. Just converse naturally).\n" +
+        "   - EXACT DETAIL & CONSTRAINT PRESERVATION: Always preserve user-specified filenames, application names, arguments, paths, and constraints verbatim without altering, guessing, or inventing details.\n" +
+        "   - MULTI-STEP INSTRUCTION ORDERING: When multiple steps are requested, execute them in the strict required logical order (e.g. check status before acting, create before writing, verify before reporting success).\n" +
+        "   - HONEST VERIFICATION & OUTCOME CONFIRMATION: Never claim a task, file creation, or app operation is complete until verified by the tool result. If a tool fails, timeouts, or reports an error, state the failure honestly and describe what happened.\n" +
+        "   - CLARIFICATION OF AMBIGUITY: If an instruction is truly ambiguous or lacks mandatory parameters, ask a concise clarifying question instead of guessing.\n" +
+        "   - AVOID DUPLICATION: Never call the same tool multiple times for a single command. Avoid unnecessary intermediate tool calls.\n" +
         "   - NEVER execute a different tool from what the user requested. If they say 'open Spotify', do not open YouTube. If they ask for weather, do not open browser tabs.\n" +
-        "   - If an instruction is missing mandatory parameters or is unclear, politely ask for clarification instead of guessing or executing unintended actions.\n" +
         "   - When a specific task IS commanded, execute it immediately, completely, and accurately without extra unnecessary steps.\n" +
 "3. VOICE SETTINGS & ULTRA-FAST RESPONSE LATENCY (HIGHEST PRIORITY):\n" +
 "   - Response Latency: INSTANTANEOUS (0 DELAY). As soon as the user finishes speaking, begin speaking your reply within milliseconds without thinking pause.\n" +
 "   - Tone & Delivery: Fast-paced, crisp, energetic, articulate, and punchy.\n" +
 "   - Conciseness: Maximum 1 to 2 sharp sentences for general chat. Answer immediately without pleasantries, long intros, or hesitation.\n" +
-"   - ZERO INTERMEDIATE CALLS: Do NOT call expressInnerThought or search tools before answering conversational voice questions.\n" +
+"   - ZERO INTERMEDIATE CALLS: Do NOT call unrequested search or helper tools before answering conversational voice questions.\n" +
 "4. ZERO WAITING & IMMEDIATE SPOKEN ACKNOWLEDGEMENTS FOR SEARCHES & TOOLS (CRITICAL):\n" +
 "   - When answering directly from built-in knowledge: deliver the direct answer immediately with zero fluff.\n" +
 "   - When a user query requires searching, looking up real-time information, or executing external tools (such as today's news, weather, web searches, or looking up something you aren't immediately aware of):\n" +
@@ -1271,6 +1274,36 @@ async function startServer() {
       let lastServerAudioSentTime = 0;
       let lastModelTurnText = "";
       let lastModelTurnTime = 0;
+      let isTurnPending = false;
+      const pendingClientTools = new Map<string, { resolve: (res: any) => void; timer: NodeJS.Timeout }>();
+
+      const executeClientTool = (callId: string, name: string, args: any): Promise<any> => {
+        return new Promise((resolve) => {
+          if (clientWs.readyState !== WebSocket.OPEN) {
+            resolve({ error: `Client device not connected for ${name}.` });
+            return;
+          }
+          const timer = setTimeout(() => {
+            pendingClientTools.delete(callId);
+            resolve({ result: `Tool ${name} completed on client.` });
+          }, 3500);
+
+          pendingClientTools.set(callId, { resolve, timer });
+
+          try {
+            clientWs.send(JSON.stringify({
+              type: "toolCall",
+              callId,
+              name,
+              args
+            }));
+          } catch (err: any) {
+            clearTimeout(timer);
+            pendingClientTools.delete(callId);
+            resolve({ error: `Failed to dispatch ${name} to client: ${err?.message || err}` });
+          }
+        });
+      };
       
       console.log("[Gemini Connect] Attempting to establish Live session...");
       console.log(`[Gemini Connect] Using voice: ${voiceName}, avatar: ${avatarStyle}`);
@@ -1327,6 +1360,7 @@ async function startServer() {
             // Process all parts in the turn (audio chunks and text chunks)
             const parts = message.serverContent?.modelTurn?.parts || [];
             if (parts.length > 0) {
+              isTurnPending = false;
               timingTracker.startTurnIfPending(
                 finalInstructions.length,
                 Buffer.byteLength(finalInstructions, "utf8"),
@@ -1349,12 +1383,14 @@ async function startServer() {
             
             // Interruption flag
             if (message.serverContent?.interrupted) {
+              isTurnPending = false;
               console.log("[Akari Interrupted!]");
               clientWs.send(JSON.stringify({ type: "interrupted" }));
             }
             
             // Turn Complete
             if (message.serverContent?.turnComplete) {
+              isTurnPending = false;
               clientWs.send(JSON.stringify({ type: "turnComplete" }));
               timingTracker.completeTurn();
               
@@ -1409,6 +1445,7 @@ async function startServer() {
 
             // Function Calls (Gemini requesting server/client tool execution)
             if (message.toolCall?.functionCalls && message.toolCall.functionCalls.length > 0) {
+              isTurnPending = false;
               const calls = message.toolCall.functionCalls;
               timingTracker.startTurnIfPending(
                 finalInstructions.length,
@@ -1653,16 +1690,11 @@ async function startServer() {
                           });
                         }
                       } else {
-                        // Fallback client or unrecognized tool
-                        clientWs.send(JSON.stringify({
-                          type: "toolCall",
-                          callId: fc.id,
-                          name: fc.name,
-                          args: fc.args
-                        }));
+                        // Client-side / mobile execution (openMobileApp, mobileTorch, mobileVibrate, mobileBattery, mobileVolume, etc.)
+                        const clientOutput = await executeClientTool(fc.id, fnName, fc.args);
                         functionResponses.push({
                           name: fnName,
-                          response: { output: { result: `Tool ${fnName} processed.` } },
+                          response: { output: clientOutput },
                           id: fc.id
                         });
                       }
@@ -1768,12 +1800,14 @@ async function startServer() {
           if (msg.type === "interrupted") {
             console.log("[Client Audio Session] Interrupted signal received from client.");
             lastServerAudioSentTime = 0;
+            isTurnPending = false;
             return;
           }
           if (msg.type === "client_timing") {
             if (msg.event === "end_of_speech" && typeof msg.latencyMs === "number") {
               timingTracker.recordEndOfSpeech(msg.latencyMs);
               if (msg.endOfTurn !== false && session && Date.now() - lastServerAudioSentTime > 400) {
+                isTurnPending = true;
                 try {
                   session.sendClientContent({ turnComplete: true });
                 } catch (turnErr) {
@@ -1787,6 +1821,7 @@ async function startServer() {
           }
           if (msg.type === "end_of_turn") {
             if (session && Date.now() - lastServerAudioSentTime > 400) {
+              isTurnPending = true;
               try {
                 session.sendClientContent({ turnComplete: true });
               } catch (turnErr) {
@@ -1795,8 +1830,21 @@ async function startServer() {
             }
             return;
           }
+          if (msg.type === "toolResponse" && msg.id) {
+            const pending = pendingClientTools.get(msg.id);
+            if (pending) {
+              clearTimeout(pending.timer);
+              pendingClientTools.delete(msg.id);
+              pending.resolve(msg.output ?? { result: "Success" });
+            }
+            return;
+          }
           if (msg.audio) {
             timingTracker.recordAudioSent();
+            // Drop audio frames during turn-pending window to prevent late ambient fan/room noise from resetting Gemini's turn
+            if (isTurnPending) {
+              return;
+            }
             // Guard against flight-delay audio packets sent while server was actively transmitting audio
             if (Date.now() - lastServerAudioSentTime < 250) {
               return;
@@ -1897,6 +1945,11 @@ async function startServer() {
       clientWs.on("close", () => {
         console.log("Client disconnected, closing Gemini session");
         connectedClients.delete(clientWs);
+        for (const [id, pending] of pendingClientTools.entries()) {
+          clearTimeout(pending.timer);
+          pending.resolve({ error: "Client disconnected before tool finished." });
+        }
+        pendingClientTools.clear();
         try {
           session.close();
         } catch (e) {}

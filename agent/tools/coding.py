@@ -85,8 +85,8 @@ def _detect_python() -> str:
 
 @register("createPythonFile")
 def create_python_file(args: Dict[str, Any]) -> Dict[str, Any]:
-    raw_path = args.get("path")
-    content = args.get("content", "")
+    raw_path = args.get("path") or args.get("filename") or args.get("file_path") or args.get("file")
+    content = args.get("content") or args.get("code") or ""
     if not raw_path:
         raise ToolError("Parameter 'path' is required.")
 
@@ -116,8 +116,8 @@ def create_python_file(args: Dict[str, Any]) -> Dict[str, Any]:
 
 @register("writeCodeFile")
 def write_code_file(args: Dict[str, Any]) -> Dict[str, Any]:
-    raw_path = args.get("path")
-    content = args.get("content", "")
+    raw_path = args.get("path") or args.get("filename") or args.get("file_path") or args.get("file")
+    content = args.get("content") or args.get("code") or ""
     language = (args.get("language") or "txt").strip().lower()
     if not raw_path:
         raise ToolError("Parameter 'path' is required.")
@@ -150,7 +150,7 @@ def write_code_file(args: Dict[str, Any]) -> Dict[str, Any]:
 
 @register("createProjectFolder")
 def create_project_folder(args: Dict[str, Any]) -> Dict[str, Any]:
-    raw_path = args.get("path") or args.get("name")
+    raw_path = args.get("path") or args.get("folder_name") or args.get("name") or args.get("folder")
     if not raw_path:
         raise ToolError("Parameter 'path' (project root) is required.")
 
@@ -203,7 +203,7 @@ def create_project_folder(args: Dict[str, Any]) -> Dict[str, Any]:
 
 @register("runPythonScript")
 def run_python_script(args: Dict[str, Any]) -> Dict[str, Any]:
-    path = args.get("path")
+    path = args.get("path") or args.get("script_path") or args.get("script") or args.get("filename")
     if not path:
         raise ToolError("Parameter 'path' (script path) is required.")
     raw = Path(os.path.expandvars(os.path.expanduser(str(path))))

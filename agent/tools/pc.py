@@ -278,6 +278,11 @@ def _cancel(args: Dict[str, Any]) -> Dict[str, Any]:
 
 @register("shutdownAkari")
 def shutdown_akari(args: Dict[str, Any]) -> Dict[str, Any]:
+    if args.get("execute_token") != "CONFIRMED_TERMINAL_ACTION":
+        raise ToolError(
+            "Shutdown requires explicit verbal confirmation and execution token 'CONFIRMED_TERMINAL_ACTION'. "
+            "Akari remains active and running."
+        )
     import os
     import signal
     import sys

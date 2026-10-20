@@ -190,7 +190,22 @@ assert(mobileBridgeSrc.includes('whatsaap: "whatsapp://"'), "mobileBridge.ts inc
 assert(serverSrc.includes("NEVER search the web or Play Store when asked to open an app"), "Server prompt prohibits web/Play Store searches when asked to open apps");
 
 // ---------------------------------------------------------------------------
-// 8. SUMMARY
+// 8. UNIVERSAL NOISE GATING, CLIENT TOOL PROMISE LOOP & LIVE2D OPTIMIZATIONS
+// ---------------------------------------------------------------------------
+console.log("\nTest Suite 8: Universal Noise Gating, Client Tool Loop & Live2D Optimization");
+assert(audioSrc.includes("awaitingModelResponse"), "audio.ts implements awaitingModelResponse turn gate");
+assert(audioSrc.includes("preRollRingBuffer"), "audio.ts implements pre-roll ring buffer so initial syllables are never clipped");
+assert(audioSrc.includes("Universal Response Speed & Noise Shield Gating"), "audio.ts applies universal noise shield gating on PC and Mobile");
+assert(serverSrc.includes("executeClientTool"), "server.ts verifies client-side tools with asynchronous execution loop");
+assert(serverSrc.includes("pendingClientTools"), "server.ts registers pendingClientTools map for reliable response verification");
+assert(serverSrc.includes("isTurnPending"), "server.ts drops late audio frames while turn is pending to protect Gemini Live turn");
+
+const viewerSrc = fs.readFileSync("src/components/AkariLive2DViewer.tsx", "utf-8");
+assert(viewerSrc.includes("resolution: Math.min(window.devicePixelRatio || 1, 1.25)"), "Live2D viewer caps resolution to 1.25 on high-DPI screens to prevent thread contention");
+assert(viewerSrc.includes("if (isSpeaking && activeSession && activeSession.outputAnalyser)"), "Live2D viewer skips audio frequency analysis when not speaking to preserve CPU");
+
+// ---------------------------------------------------------------------------
+// 9. SUMMARY
 // ---------------------------------------------------------------------------
 console.log("\n=======================================================");
 console.log(`TOTAL TESTS: ${passCount + failCount} | PASSED: ${passCount} | FAILED: ${failCount}`);

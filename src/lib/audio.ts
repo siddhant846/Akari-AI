@@ -133,6 +133,9 @@ export class AkariAudioSession {
   private isModelTurnComplete = true;
   private bargeInConsecutiveFrames = 0;
   private echoSuppressionUntil = 0;
+  private awaitingModelResponse = false;
+  private preRollRingBuffer: Float32Array[] = [];
+  private maxPreRollFrames = 3;
 
   // Saved connection parameters for seamless auto-reconnect
   private lastVoice?: string;
@@ -146,9 +149,11 @@ export class AkariAudioSession {
 
   // Turn latency measurement instrumentation (Step 1)
   private lastSpeechTimestamp = 0;
+  private speechOnsetTimestamp = 0;
   private isUserTalking = false;
   private silenceStartTimestamp = 0;
   private ambientNoiseFloor = 0.010;
+  private recentRmsHistory: number[] = [];
   private firstAudioChunkReceivedTime = 0;
   private hasReportedPlaybackThisTurn = false;
 
@@ -417,16 +422,21 @@ export class AkariAudioSession {
 
         // Acoustic Feedback Shield & Barge-In Protection:
         if (isModelSpeaking || isEchoCoolingDown) {
-          if (rms >= 0.22 && isModelSpeaking) {
+          // Allow natural, reliable user interruption (adaptive RMS >= 0.08)
+          const bargeInThreshold = Math.max(0.08, this.ambientNoiseFloor * 2.2);
+          if (rms >= bargeInThreshold && isModelSpeaking) {
             this.bargeInConsecutiveFrames++;
-            if (this.bargeInConsecutiveFrames >= 8) {
-              console.log(`[Akari Audio] Deliberate user barge-in triggered (RMS: ${rms.toFixed(3)})`);
+            if (this.bargeInConsecutiveFrames >= 4) {
+              console.log(`[Akari Audio] User barge-in triggered (RMS: ${rms.toFixed(3)})`);
               this.bargeInConsecutiveFrames = 0;
               this.handleInterruption();
+              this.awaitingModelResponse = false;
+              this.isUserTalking = true;
+              this.lastSpeechTimestamp = now;
               if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({ type: "interrupted" }));
               }
-              this.echoSuppressionUntil = Date.now() + 120;
+              this.echoSuppressionUntil = Date.now() + 100;
             }
           } else {
             this.bargeInConsecutiveFrames = 0;
@@ -437,20 +447,67 @@ export class AkariAudioSession {
 
         this.bargeInConsecutiveFrames = 0;
 
-        // Adaptively track ambient noise floor during non-speech / quiet periods
-        if (!this.isUserTalking || rms < this.ambientNoiseFloor * 1.5) {
-          this.ambientNoiseFloor = this.ambientNoiseFloor * 0.96 + rms * 0.04;
-          this.ambientNoiseFloor = Math.max(0.003, Math.min(0.035, this.ambientNoiseFloor));
+        // Maintain sliding 30-frame window (~1 sec) of RMS energy for true noise floor and stationary noise analysis
+        this.recentRmsHistory.push(rms);
+        if (this.recentRmsHistory.length > 30) {
+          this.recentRmsHistory.shift();
+        }
+        const minRms = Math.min(...this.recentRmsHistory);
+        const maxRms = Math.max(...this.recentRmsHistory);
+
+        // Adaptively track ambient noise floor towards minimum energy observed
+        if (!this.isUserTalking) {
+          this.ambientNoiseFloor = this.ambientNoiseFloor * 0.95 + minRms * 0.05;
+        } else if (minRms < this.ambientNoiseFloor) {
+          this.ambientNoiseFloor = this.ambientNoiseFloor * 0.90 + minRms * 0.10;
+        }
+        this.ambientNoiseFloor = Math.max(0.003, Math.min(0.035, this.ambientNoiseFloor));
+
+        // Stationary noise rejection (PC fan / HVAC / electric hum):
+        // If sound has lasted > 800ms without pauses, but peak-to-floor variance is flat (< 0.004),
+        // it is stationary mechanical noise, NOT human speech.
+        if (this.isUserTalking && (now - this.speechOnsetTimestamp > 800)) {
+          if (maxRms - minRms < 0.004) {
+            this.isUserTalking = false;
+            this.ambientNoiseFloor = Math.max(this.ambientNoiseFloor, minRms);
+            this.speechHangoverFrames = 0;
+            this.awaitingModelResponse = true;
+          }
         }
 
         // Dynamic dual-threshold VAD: sensitive, natural human hearing
         const speechStartThreshold = Math.max(0.008, this.ambientNoiseFloor * 1.35);
         const silenceThreshold = Math.max(0.005, this.ambientNoiseFloor * 1.10);
 
+        // Maintain rolling pre-roll buffer when user is not talking
+        if (!this.isUserTalking) {
+          this.preRollRingBuffer.push(new Float32Array(channelData));
+          if (this.preRollRingBuffer.length > this.maxPreRollFrames) {
+            this.preRollRingBuffer.shift();
+          }
+        }
+
         if (rms >= speechStartThreshold) {
+          const wasNotTalking = !this.isUserTalking;
+          if (wasNotTalking) {
+            this.speechOnsetTimestamp = now;
+          }
           this.lastSpeechTimestamp = now;
           this.isUserTalking = true;
           this.silenceStartTimestamp = 0;
+          this.awaitingModelResponse = false;
+          this.speechHangoverFrames = 0;
+
+          // If speech just initiated, flush rolling pre-roll frames first so the initial syllable is never clipped
+          if (wasNotTalking && this.preRollRingBuffer.length > 0) {
+            for (const preRollChunk of this.preRollRingBuffer) {
+              const pcm = floatTo16BitPCM(preRollChunk);
+              if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({ audio: base64ArrayBuffer(pcm) }));
+              }
+            }
+            this.preRollRingBuffer = [];
+          }
         } else if (this.isUserTalking) {
           if (rms <= silenceThreshold || now - this.lastSpeechTimestamp > 80) {
             if (!this.silenceStartTimestamp) {
@@ -466,6 +523,8 @@ export class AkariAudioSession {
             const vadLatency = now - this.lastSpeechTimestamp;
             this.isUserTalking = false;
             this.silenceStartTimestamp = 0;
+            this.awaitingModelResponse = true;
+            this.speechHangoverFrames = 6; // Preserve 6 frames (~190ms) of trailing audio so Gemini triggers immediately
             if (this.ws && this.ws.readyState === WebSocket.OPEN) {
               this.ws.send(JSON.stringify({
                 type: "client_timing",
@@ -477,19 +536,16 @@ export class AkariAudioSession {
           }
         }
 
-        // Response Speed & VAD Continuity:
-        // Gemini Live relies on receiving trailing silence in the PCM audio stream to trigger its neural VAD endpointing (~200ms).
-        // In standard mode: stream continuously while listening so responses are instantaneous.
-        // In low-bandwidth mode: preserve 6 frames (~190ms) of trailing silence so Gemini triggers immediately before pausing stream.
-        if (this.lowBandwidthMode) {
-          const isSpeaking = rms >= speechStartThreshold * 0.6;
-          if (isSpeaking) {
-            this.speechHangoverFrames = 6;
-          } else if (this.speechHangoverFrames > 0) {
+        // Universal Response Speed & Noise Shield Gating:
+        // While user is talking: stream all frames.
+        // When speech ends: stream exactly 6 frames (~190ms) of trailing decay so Gemini's neural VAD triggers cleanly.
+        // Once trailing hangover frames finish: GATE (PAUSE) streaming microphone audio until model replies or user speaks again.
+        // This prevents continuous fan/room noise from being pumped into Gemini Live on PC, eliminating excessive listening and delays!
+        if (!this.isUserTalking) {
+          if (this.speechHangoverFrames > 0) {
             this.speechHangoverFrames--;
-          }
-
-          if (!isSpeaking && this.speechHangoverFrames <= 0) {
+          } else {
+            // Awaiting model response or idle quiet room — do not send silent/noisy mic frames
             return;
           }
         }
@@ -701,6 +757,7 @@ export class AkariAudioSession {
         // Handle audio payload (24kHz PCM model response)
         if (data.type === "audio" && data.audio) {
           this.isModelTurnComplete = false;
+          this.awaitingModelResponse = false;
           if (!this.firstAudioChunkReceivedTime) {
             this.firstAudioChunkReceivedTime = Date.now();
             this.hasReportedPlaybackThisTurn = false;
@@ -708,16 +765,17 @@ export class AkariAudioSession {
           this.playAudioPCMChunk(data.audio);
         }
 
-
         // Interruption signal
         if (data.type === "interrupted") {
           this.isModelTurnComplete = true;
+          this.awaitingModelResponse = false;
           this.handleInterruption();
         }
 
         // Turn complete
         if (data.type === "turnComplete") {
           this.isModelTurnComplete = true;
+          this.awaitingModelResponse = false;
           this.firstAudioChunkReceivedTime = 0;
           this.hasReportedPlaybackThisTurn = false;
           if (this.activeSources.length === 0 && this.currentState === "speaking") {
@@ -732,6 +790,9 @@ export class AkariAudioSession {
 
         // Transcriptions
         if (data.type === "transcription") {
+          if (data.role === "model") {
+            this.awaitingModelResponse = false;
+          }
           this.onTranscription(data.role, data.text);
         }
 
