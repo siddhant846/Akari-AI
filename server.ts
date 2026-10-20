@@ -3,8 +3,10 @@ import http from "http";
 import path from "path";
 import { fileURLToPath } from "url";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const currentFilePath = (typeof import.meta !== "undefined" && import.meta?.url) 
+  ? fileURLToPath(import.meta.url) 
+  : (typeof __filename !== "undefined" ? __filename : path.join(process.cwd(), "server.cjs"));
+const currentDirPath = typeof __dirname !== "undefined" ? __dirname : path.dirname(currentFilePath);
 import { WebSocketServer } from "ws";
 import { GoogleGenAI, Modality, Type, LiveServerMessage, StartSensitivity, EndSensitivity } from "@google/genai";
 import dotenv from "dotenv";
@@ -1912,20 +1914,20 @@ async function startServer() {
 
   // Resolve correct production static distribution root
   const potentialDistRoots = [
-    path.join(__dirname),
-    path.join(__dirname, "..", "dist"),
+    path.join(currentDirPath),
+    path.join(currentDirPath, "..", "dist"),
     path.join(process.cwd(), "dist"),
     path.join(process.cwd()),
     path.join((process as any).resourcesPath || "", "app.asar", "dist"),
     path.join((process as any).resourcesPath || "", "app", "dist"),
   ];
-  let distPath = potentialDistRoots.find((p) => p && fs.existsSync(path.join(p, "index.html"))) || path.join(__dirname);
+  let distPath = potentialDistRoots.find((p) => p && fs.existsSync(path.join(p, "index.html"))) || path.join(currentDirPath);
 
   // Serve custom static assets folder
   const potentialAssetRoots = [
     path.join(distPath, "assets"),
-    path.join(__dirname, "..", "public", "assets"),
-    path.join(__dirname, "public", "assets"),
+    path.join(currentDirPath, "..", "public", "assets"),
+    path.join(currentDirPath, "public", "assets"),
     path.join(process.cwd(), "public", "assets"),
     path.join(process.cwd(), "assets"),
   ];
@@ -1936,7 +1938,12 @@ async function startServer() {
   }
 
   // Express Static assets / Vite Dev Middleware configuration
-  if (process.env.NODE_ENV !== "production" && !process.env.ELECTRON_PROD) {
+  const isProductionMode =
+    process.env.NODE_ENV === "production" ||
+    Boolean(process.env.ELECTRON_PROD) ||
+    (fs.existsSync(path.join(distPath, "index.html")) && process.env.VITE_DEV !== "true");
+
+  if (!isProductionMode) {
     // Loaded lazily so the production bundle never requires vite (a dev-only
     // dependency that is not shipped with the packaged app).
     const { createServer: createViteServer } = await import("vite");

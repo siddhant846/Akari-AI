@@ -2,9 +2,11 @@ import * as fs from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const LOGS_DIR = path.join(__dirname, "logs");
+const currentFilePath = (typeof import.meta !== "undefined" && import.meta?.url) 
+  ? fileURLToPath(import.meta.url) 
+  : (typeof __filename !== "undefined" ? __filename : path.join(process.cwd(), "server.cjs"));
+const currentDirPath = typeof __dirname !== "undefined" ? __dirname : path.dirname(currentFilePath);
+const LOGS_DIR = path.join(currentDirPath, "logs");
 const TIMINGS_LOG_FILE = path.join(LOGS_DIR, "turn_timings.log");
 const TIMINGS_JSON_FILE = path.join(LOGS_DIR, "turn_timings.json");
 
