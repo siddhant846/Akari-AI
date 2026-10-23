@@ -1965,20 +1965,47 @@ async function startServer() {
     }
   });
 
+  // Check if a directory contains a COMPILED production index.html (not raw /src/main.tsx)
+  function isCompiledDist(dir: string): boolean {
+    const indexPath = path.join(dir, "index.html");
+    if (!fs.existsSync(indexPath)) return false;
+    try {
+      const content = fs.readFileSync(indexPath, "utf-8");
+      // If it contains /src/main.tsx, it is raw dev source, not compiled production dist!
+      return !content.includes("/src/main.tsx");
+    } catch {
+      return false;
+    }
+  }
+
   // Resolve correct production static distribution root
   const potentialDistRoots = [
-    path.join(currentDirPath),
+    path.join(currentDirPath, "dist"),
+    path.join(currentDirPath), // When running inside dist/ e.g. dist/server.cjs
     path.join(currentDirPath, "..", "dist"),
     path.join(process.cwd(), "dist"),
-    path.join(process.cwd()),
     path.join((process as any).resourcesPath || "", "app.asar", "dist"),
     path.join((process as any).resourcesPath || "", "app", "dist"),
   ];
-  let distPath = potentialDistRoots.find((p) => p && fs.existsSync(path.join(p, "index.html"))) || path.join(currentDirPath);
+  let distPath = potentialDistRoots.find((p) => p && isCompiledDist(p)) || "";
+
+  // Serve static public folder (models, live2d, sounds, icons, assets)
+  const potentialPublicRoots = [
+    distPath,
+    path.join(currentDirPath, "public"),
+    path.join(currentDirPath, "..", "public"),
+    path.join(process.cwd(), "public"),
+    path.join((process as any).resourcesPath || "", "public"),
+  ];
+  for (const pr of potentialPublicRoots) {
+    if (pr && fs.existsSync(pr)) {
+      app.use(express.static(pr));
+    }
+  }
 
   // Serve custom static assets folder
   const potentialAssetRoots = [
-    path.join(distPath, "assets"),
+    distPath ? path.join(distPath, "assets") : "",
     path.join(currentDirPath, "..", "public", "assets"),
     path.join(currentDirPath, "public", "assets"),
     path.join(process.cwd(), "public", "assets"),
@@ -1991,14 +2018,14 @@ async function startServer() {
   }
 
   // Express Static assets / Vite Dev Middleware configuration
-  const isProductionMode =
-    process.env.NODE_ENV === "production" ||
-    Boolean(process.env.ELECTRON_PROD) ||
-    (fs.existsSync(path.join(distPath, "index.html")) && process.env.VITE_DEV !== "true");
+  const isDevCommand =
+    process.env.VITE_DEV === "true" ||
+    process.env.npm_lifecycle_event === "dev" ||
+    (!process.env.NODE_ENV && !process.env.ELECTRON_PROD);
+  const isProductionMode = Boolean(distPath) && !isDevCommand;
 
   if (!isProductionMode) {
-    // Loaded lazily so the production bundle never requires vite (a dev-only
-    // dependency that is not shipped with the packaged app).
+    console.log("[Server] Launching in Development mode with dynamic Vite middleware...");
     const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -2008,7 +2035,10 @@ async function startServer() {
   } else {
     console.log(`[Server] Serving production static bundle from: ${distPath}`);
     app.use(express.static(distPath));
-    app.get("*", (req, res) => {
+    app.get("*", (req, res, next) => {
+      if (req.path.startsWith("/api") || req.path === "/live" || req.path.startsWith("/memories") || req.path.startsWith("/settings")) {
+        return next();
+      }
       const indexPath = path.join(distPath, "index.html");
       if (fs.existsSync(indexPath)) {
         res.sendFile(indexPath);

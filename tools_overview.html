@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Akari AI — Tool Ecosystem Directory</title>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090b10;
+      --card-bg: rgba(22, 27, 34, 0.7);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --accent-pink: #ff4d8d;
+      --accent-purple: #8b5cf6;
+      --accent-cyan: #06b6d4;
+      --accent-green: #10b981;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: radial-gradient(circle at 10% 20%, rgba(139, 92, 246, 0.15) 0%, transparent 40%),
+                  radial-gradient(circle at 90% 80%, rgba(255, 77, 141, 0.15) 0%, transparent 40%),
+                  var(--bg);
+      background-attachment: fixed;
+      color: var(--text);
+      font-family: "Plus Jakarta Sans", sans-serif;
+      padding: 40px 24px;
+      min-height: 100vh;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      margin-bottom: 32px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid var(--card-border);
+    }
+    .title-group h1 {
+      font-size: 32px;
+      font-weight: 800;
+      background: linear-gradient(135deg, #fff 0%, #ff4d8d 50%, #8b5cf6 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 8px;
+    }
+    .title-group p {
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+    .stat-card {
+      background: var(--card-bg);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+    }
+    .stat-card .num {
+      font-size: 36px;
+      font-weight: 800;
+      color: #fff;
+    }
+    .stat-card .label {
+      font-size: 13px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-top: 4px;
+    }
+    .controls {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+    }
+    .search-box {
+      flex: 1;
+      min-width: 280px;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 12px 18px;
+      color: #fff;
+      font-size: 14px;
+      font-family: inherit;
+      outline: none;
+      transition: all 0.2s;
+    }
+    .search-box:focus {
+      border-color: var(--accent-pink);
+      box-shadow: 0 0 0 3px rgba(255, 77, 141, 0.2);
+    }
+    .filter-btn {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      color: var(--text-muted);
+      padding: 10px 18px;
+      border-radius: 12px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 13px;
+      transition: all 0.2s;
+    }
+    .filter-btn.active, .filter-btn:hover {
+      background: rgba(255, 77, 141, 0.2);
+      border-color: var(--accent-pink);
+      color: #fff;
+    }
+    .tools-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+      gap: 14px;
+    }
+    .tool-card {
+      background: var(--card-bg);
+      backdrop-filter: blur(10px);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 16px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      transition: transform 0.15s, border-color 0.15s;
+    }
+    .tool-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(255, 255, 255, 0.25);
+    }
+    .tool-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      overflow: hidden;
+    }
+    .tool-num {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11px;
+      color: var(--text-muted);
+      min-width: 24px;
+    }
+    .tool-name {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 14px;
+      font-weight: 600;
+      color: #f9fafb;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .tags {
+      display: flex;
+      gap: 6px;
+    }
+    .tag {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .tag-gemini {
+      background: rgba(139, 92, 246, 0.2);
+      color: #a78bfa;
+      border: 1px solid rgba(139, 92, 246, 0.4);
+    }
+    .tag-python {
+      background: rgba(16, 185, 129, 0.2);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.4);
+    }
+    .launch-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: linear-gradient(135deg, #ff4d8d, #8b5cf6);
+      color: #fff;
+      font-weight: 700;
+      font-size: 14px;
+      padding: 12px 24px;
+      border-radius: 12px;
+      text-decoration: none;
+      box-shadow: 0 4px 16px rgba(255, 77, 141, 0.3);
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .launch-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(255, 77, 141, 0.5);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="title-group">
+        <h1>Akari AI Tool Ecosystem</h1>
+        <p>Live synchronized catalog of all Gemini Live and Python Desktop Control Agent tools</p>
+      </div>
+      <a href="http://localhost:3000" target="_blank" class="launch-btn">
+        Open Akari Assistant ↗
+      </a>
+    </header>
+
+    <div class="stats-row">
+      <div class="stat-card">
+        <span class="num">125</span>
+        <span class="label">Total Ecosystem Tools</span>
+      </div>
+      <div class="stat-card">
+        <span class="num" style="color: #a78bfa;">98</span>
+        <span class="label">Gemini Live Declarations</span>
+      </div>
+      <div class="stat-card">
+        <span class="num" style="color: #34d399;">116</span>
+        <span class="label">Python Agent Tools</span>
+      </div>
+    </div>
+
+    <div class="controls">
+      <input type="text" id="searchInput" class="search-box" placeholder="Search tool by name (e.g. browser, file, volume, brightness)..." autofocus>
+      <button class="filter-btn active" onclick="setFilter("all")">All (125)</button>
+      <button class="filter-btn" onclick="setFilter("gemini")">Gemini Live (98)</button>
+      <button class="filter-btn" onclick="setFilter("python")">Python Agent (116)</button>
+      <button class="filter-btn" onclick="setFilter("dual")">Dual-Integrated</button>
+    </div>
+
+    <div class="tools-grid" id="toolsGrid"></div>
+  </div>
+
+  <script>
+    const tools = [{"name": "_cancelPowerTimer", "in_gemini": false, "in_py": true}, {"name": "addSlideToPresentation", "in_gemini": true, "in_py": true}, {"name": "akariBuilderPipeline", "in_gemini": true, "in_py": true}, {"name": "analyzeData", "in_gemini": true, "in_py": true}, {"name": "analyzeScreenshot", "in_gemini": true, "in_py": true}, {"name": "auditLocalBusinesses", "in_gemini": false, "in_py": true}, {"name": "brightnessDown", "in_gemini": true, "in_py": true}, {"name": "brightnessUp", "in_gemini": true, "in_py": true}, {"name": "browserMediaControl", "in_gemini": true, "in_py": true}, {"name": "browserTabAction", "in_gemini": true, "in_py": true}, {"name": "buildAnimatedWebsite", "in_gemini": true, "in_py": true}, {"name": "cameraList", "in_gemini": true, "in_py": true}, {"name": "cameraOff", "in_gemini": true, "in_py": true}, {"name": "cameraOn", "in_gemini": true, "in_py": true}, {"name": "cancelReminder", "in_gemini": true, "in_py": false}, {"name": "clearClipboard", "in_gemini": true, "in_py": true}, {"name": "clickYouTubeVideo", "in_gemini": false, "in_py": true}, {"name": "closeApplication", "in_gemini": true, "in_py": true}, {"name": "closeWindow", "in_gemini": true, "in_py": true}, {"name": "copySelected", "in_gemini": true, "in_py": true}, {"name": "createCalendarEvent", "in_gemini": true, "in_py": true}, {"name": "createDataChart", "in_gemini": true, "in_py": true}, {"name": "createDocument", "in_gemini": true, "in_py": true}, {"name": "createExcelSpreadsheet", "in_gemini": true, "in_py": true}, {"name": "createFile", "in_gemini": true, "in_py": true}, {"name": "createPresentation", "in_gemini": true, "in_py": true}, {"name": "createProjectFolder", "in_gemini": true, "in_py": true}, {"name": "createPythonFile", "in_gemini": true, "in_py": true}, {"name": "createTask", "in_gemini": true, "in_py": true}, {"name": "deleteFile", "in_gemini": true, "in_py": true}, {"name": "desktopBrowserClick", "in_gemini": true, "in_py": true}, {"name": "desktopBrowserCloseTab", "in_gemini": false, "in_py": true}, {"name": "desktopBrowserFillForm", "in_gemini": false, "in_py": true}, {"name": "desktopBrowserGetLinks", "in_gemini": true, "in_py": true}, {"name": "desktopBrowserGoBack", "in_gemini": true, "in_py": true}, {"name": "desktopBrowserGoForward", "in_gemini": true, "in_py": true}, {"name": "desktopBrowserNavigate", "in_gemini": false, "in_py": true}, {"name": "desktopBrowserOpen", "in_gemini": true, "in_py": true}, {"name": "desktopBrowserOpenTab", "in_gemini": false, "in_py": true}, {"name": "desktopBrowserOpenYoutubeVideo", "in_gemini": false, "in_py": true}, {"name": "desktopBrowserReadText", "in_gemini": true, "in_py": true}, {"name": "desktopBrowserScroll", "in_gemini": true, "in_py": true}, {"name": "desktopBrowserSearch", "in_gemini": true, "in_py": true}, {"name": "desktopBrowserSetMode", "in_gemini": false, "in_py": true}, {"name": "desktopBrowserType", "in_gemini": true, "in_py": true}, {"name": "disableAutoStart", "in_gemini": true, "in_py": true}, {"name": "enableAutoStart", "in_gemini": true, "in_py": true}, {"name": "executePowerAction", "in_gemini": true, "in_py": true}, {"name": "exportConversation", "in_gemini": false, "in_py": true}, {"name": "getAutoStartStatus", "in_gemini": true, "in_py": true}, {"name": "getCalendarEvents", "in_gemini": true, "in_py": true}, {"name": "getClipboard", "in_gemini": true, "in_py": true}, {"name": "getEmails", "in_gemini": true, "in_py": true}, {"name": "getNews", "in_gemini": true, "in_py": true}, {"name": "getTasks", "in_gemini": true, "in_py": true}, {"name": "getWeather", "in_gemini": true, "in_py": true}, {"name": "gpuInfo", "in_gemini": true, "in_py": true}, {"name": "iitmOpen", "in_gemini": false, "in_py": true}, {"name": "iitmOpenCustom", "in_gemini": false, "in_py": true}, {"name": "iitmQuickLinks", "in_gemini": false, "in_py": true}, {"name": "installPackage", "in_gemini": false, "in_py": true}, {"name": "isCommandAllowed", "in_gemini": true, "in_py": true}, {"name": "listExports", "in_gemini": false, "in_py": true}, {"name": "listFiles", "in_gemini": true, "in_py": true}, {"name": "listReminders", "in_gemini": true, "in_py": false}, {"name": "listWorkspaces", "in_gemini": false, "in_py": true}, {"name": "maximizeWindow", "in_gemini": true, "in_py": true}, {"name": "minimizeWindow", "in_gemini": true, "in_py": true}, {"name": "mobileBattery", "in_gemini": true, "in_py": false}, {"name": "mobileTorch", "in_gemini": true, "in_py": false}, {"name": "mobileVibrate", "in_gemini": true, "in_py": false}, {"name": "mobileVolume", "in_gemini": true, "in_py": false}, {"name": "moveFile", "in_gemini": true, "in_py": true}, {"name": "moveToWorkspace", "in_gemini": false, "in_py": true}, {"name": "muteToggle", "in_gemini": true, "in_py": true}, {"name": "openApplication", "in_gemini": true, "in_py": true}, {"name": "openFile", "in_gemini": true, "in_py": true}, {"name": "openFolder", "in_gemini": true, "in_py": true}, {"name": "openMobileApp", "in_gemini": true, "in_py": false}, {"name": "openPowerPoint", "in_gemini": true, "in_py": true}, {"name": "openWebsite", "in_gemini": false, "in_py": true}, {"name": "osClick", "in_gemini": true, "in_py": true}, {"name": "osPress", "in_gemini": true, "in_py": true}, {"name": "osType", "in_gemini": true, "in_py": true}, {"name": "pasteClipboard", "in_gemini": true, "in_py": true}, {"name": "playEpisode", "in_gemini": false, "in_py": true}, {"name": "playYouTubeVideo", "in_gemini": true, "in_py": true}, {"name": "provideSudoPassword", "in_gemini": false, "in_py": true}, {"name": "qualityCheckWebsite", "in_gemini": true, "in_py": true}, {"name": "readFile", "in_gemini": true, "in_py": true}, {"name": "readPresentation", "in_gemini": true, "in_py": true}, {"name": "readScreen", "in_gemini": true, "in_py": true}, {"name": "renameFile", "in_gemini": true, "in_py": true}, {"name": "requestPowerAction", "in_gemini": true, "in_py": true}, {"name": "requestTerminalAction", "in_gemini": true, "in_py": true}, {"name": "researchDesignReferences", "in_gemini": true, "in_py": true}, {"name": "runPythonScript", "in_gemini": true, "in_py": true}, {"name": "runTerminalCommand", "in_gemini": true, "in_py": true}, {"name": "saveCustomMemory", "in_gemini": true, "in_py": false}, {"name": "saveScreenshot", "in_gemini": true, "in_py": true}, {"name": "searchAndBuildLocalWebsite", "in_gemini": true, "in_py": true}, {"name": "searchFiles", "in_gemini": true, "in_py": true}, {"name": "searchGitHub", "in_gemini": true, "in_py": true}, {"name": "searchGoogle", "in_gemini": false, "in_py": true}, {"name": "searchGoogleMaps", "in_gemini": true, "in_py": true}, {"name": "searchPresentationImages", "in_gemini": false, "in_py": true}, {"name": "searchWeb", "in_gemini": true, "in_py": true}, {"name": "searchWebAnswer", "in_gemini": true, "in_py": true}, {"name": "searchYouTube", "in_gemini": false, "in_py": true}, {"name": "selectYouTubeVideo", "in_gemini": false, "in_py": true}, {"name": "sendEmail", "in_gemini": true, "in_py": true}, {"name": "setBrightness", "in_gemini": true, "in_py": true}, {"name": "setReminder", "in_gemini": true, "in_py": false}, {"name": "setVolume", "in_gemini": true, "in_py": true}, {"name": "shutdownAkari", "in_gemini": true, "in_py": true}, {"name": "switchApplication", "in_gemini": true, "in_py": true}, {"name": "switchWorkspace", "in_gemini": false, "in_py": true}, {"name": "systemInfo", "in_gemini": true, "in_py": true}, {"name": "takeScreenshot", "in_gemini": true, "in_py": true}, {"name": "temperatureInfo", "in_gemini": true, "in_py": true}, {"name": "volumeDown", "in_gemini": true, "in_py": true}, {"name": "volumeUp", "in_gemini": true, "in_py": true}, {"name": "whatsappSendMessage", "in_gemini": false, "in_py": true}, {"name": "writeCodeFile", "in_gemini": true, "in_py": true}, {"name": "youtubeControl", "in_gemini": false, "in_py": true}];
+    let currentFilter = "all";
+    const grid = document.getElementById("toolsGrid");
+    const searchInput = document.getElementById("searchInput");
+
+    function renderTools() {
+      const query = searchInput.value.toLowerCase().trim();
+      const filtered = tools.filter(t => {
+        const matchesQuery = t.name.toLowerCase().includes(query);
+        if (!matchesQuery) return false;
+        if (currentFilter === "gemini") return t.in_gemini;
+        if (currentFilter === "python") return t.in_py;
+        if (currentFilter === "dual") return t.in_gemini && t.in_py;
+        return true;
+      });
+
+      grid.innerHTML = filtered.map((t, idx) => `
+        <div class="tool-card">
+          <div class="tool-info">
+            <span class="tool-num">${idx + 1}</span>
+            <span class="tool-name" title="${t.name}">${t.name}</span>
+          </div>
+          <div class="tags">
+            ${t.in_gemini ? `<span class="tag tag-gemini">Gemini</span>` : ""}
+            ${t.in_py ? `<span class="tag tag-python">Python</span>` : ""}
+          </div>
+        </div>
+      `).join("");
+    }
+
+    function setFilter(filter) {
+      currentFilter = filter;
+      document.querySelectorAll(".filter-btn").forEach(btn => btn.classList.remove("active"));
+      event.target.classList.add("active");
+      renderTools();
+    }
+
+    searchInput.addEventListener("input", renderTools);
+    renderTools();
+  </script>
+</body>
+</html>
