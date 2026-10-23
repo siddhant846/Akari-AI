@@ -2,6 +2,9 @@
 
 A real-time, voice-to-voice holographic AI companion desktop assistant built on the **Google Gemini Live API**. AKARI combines a holographic video character, persistent memory, a reminder system, a full desktop automation agent, and an in-app browser — all running locally with a 3-process architecture.
 
+> 🚀 **Live Web Application**: [https://akari-ai-live.web.app](https://akari-ai-live.web.app)  
+> 🌐 **Firebase Project Console**: [https://console.firebase.google.com/project/akari-ai-live/overview](https://console.firebase.google.com/project/akari-ai-live/overview)
+
 ---
 
 ## Table of Contents
