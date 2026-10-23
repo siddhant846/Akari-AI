@@ -7,16 +7,14 @@ from agent.registry import TOOLS, load_all
 
 load_all()
 
-with open('server.ts', 'r', encoding='utf-8') as f:
+server_tool_file = 'server_tools_routing.ts' if os.path.exists('server_tools_routing.ts') else 'server.ts'
+with open(server_tool_file, 'r', encoding='utf-8') as f:
     text = f.read()
 
-start = text.find('functionDeclarations:')
-end = text.find('callbacks:', start)
-block = text[start:end]
-gemini_tools = sorted(list(set(re.findall(r'name:\s*"([^"]+)"', block))))
+gemini_tools = sorted(list(set(re.findall(r'name:\s*"([^"]+)"', text))))
 py_tools = sorted(list(TOOLS.keys()))
 
-print(f"Gemini Live Function Declarations in server.ts: {len(gemini_tools)}")
+print(f"Gemini Live Function Declarations in {server_tool_file}: {len(gemini_tools)}")
 print(f"Python Desktop Control Agent Tools: {len(py_tools)}")
 total_unique = sorted(list(set(gemini_tools).union(set(py_tools))))
 print(f"Total Unique Tools in Ecosystem: {len(total_unique)}")
